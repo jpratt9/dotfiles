@@ -163,5 +163,5 @@ bashrc() {
 }
 
 execb() {
-    exec zsh
+    exec bash
 }
