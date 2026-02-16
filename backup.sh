@@ -25,7 +25,7 @@ fi
 
 # Commit and push
 git add -A
-git commit -m "backup $(date '+%Y-%m-%d %H:%M')"
+git commit -m "automatic backup $(date '+%Y-%m-%d %H:%M')"
 if git push; then
     log "Backup successful"
 else
