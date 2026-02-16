@@ -70,4 +70,4 @@ export PATH="$HOME/.pyenv/bin:$PATH"
 eval "$(pyenv init --path)"
 eval "$(pyenv init -)"
 
-nvm use v20.17.0
+nvm use 24
