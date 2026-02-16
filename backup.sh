@@ -10,6 +10,9 @@ log() {
 
 cd "$DOTFILES_DIR" || exit 1
 
+# Pull latest
+git pull --rebase
+
 # Copy dotfiles
 cp ~/.zshrc "$DOTFILES_DIR/.zshrc"
 cp ~/.zprofile "$DOTFILES_DIR/.zprofile" 2>/dev/null
