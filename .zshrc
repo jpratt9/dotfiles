@@ -74,3 +74,8 @@ eval "$(pyenv init --path)"
 eval "$(pyenv init -)"
 
 nvm use 24
+
+# stop asking for keychain on login
+if [ -n "$SSH_CONNECTION" ]; then
+  security unlock-keychain ~/Library/Keychains/login.keychain-db
+fi
