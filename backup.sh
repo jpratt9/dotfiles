@@ -16,6 +16,7 @@ git pull --rebase
 # Copy dotfiles
 cp ~/.zshrc "$DOTFILES_DIR/.zshrc"
 cp ~/.zprofile "$DOTFILES_DIR/.zprofile" 2>/dev/null
+cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks" 2>/dev/null
 
 # Check for changes
 if git diff --quiet; then
