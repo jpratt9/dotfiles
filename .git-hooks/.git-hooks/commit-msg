@@ -1,0 +1,10 @@
+#!/bin/bash
+
+# Strip any Co-Authored-By lines from commit messages
+sed -i '' '/Co-Authored-By/d' "$1"
+
+# Prepend [chore] if no conventional commit tag is present
+MSG=$(head -1 "$1")
+if ! echo "$MSG" | grep -qE '^\[(feat|fix|chore|refactor|docs|test|style|perf|ci|build|revert)\]'; then
+    sed -i '' "1s/^/[chore] /" "$1"
+fi
