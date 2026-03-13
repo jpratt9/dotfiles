@@ -9,6 +9,7 @@ Follow these steps in order:
 1. **Add unit tests** for any new or changed code that isn't already covered
 2. **Run all unit tests** and fix any failures, then re-run until all pass
 3. **Stage and commit** all changed files with an appropriate conventional commit message
-4. **Push to GitHub**
+4. **Re-deploy modified cloud infrastructure/remote code** (Lambda functions, Cloudflare Workers, etc.) with Terraform/etc if any changed files are part of an IaC-managed project
+5. **Push to GitHub**
 
 Do NOT skip any step. Do NOT ask for confirmation between steps.
