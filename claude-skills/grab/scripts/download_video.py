@@ -41,7 +41,8 @@ def download_video(url: str) -> dict:
     if not safe_title:
         safe_title = "video"
 
-    output_path = os.path.join(os.getcwd(), f"{safe_title}.{ext}")
+    download_dir = os.path.expanduser("~/Downloads")
+    output_path = os.path.join(download_dir, f"{safe_title}.{ext}")
 
     # Download best quality
     result = subprocess.run(
@@ -60,10 +61,10 @@ def download_video(url: str) -> dict:
             output_path = mp4_path
         else:
             # Find whatever file yt-dlp actually wrote
-            candidates = [f for f in os.listdir(os.getcwd())
+            candidates = [f for f in os.listdir(download_dir)
                           if f.startswith(safe_title) and not f.endswith(".json")]
             if candidates:
-                output_path = os.path.join(os.getcwd(), candidates[0])
+                output_path = os.path.join(download_dir, candidates[0])
             else:
                 return {"error": "Download appeared to succeed but output file not found."}
 
