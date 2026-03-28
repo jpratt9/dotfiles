@@ -1,7 +1,7 @@
 ---
 name: dig
 description: Re-answer the last prompt with concrete facts instead of guesses
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 Stop. You just guessed or made assumptions in your last response.

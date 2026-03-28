@@ -1,7 +1,7 @@
 ---
 name: ship
 description: Add unit tests for changes, run them, fix failures, commit, and push to GitHub
-disable-model-invocation: true
+disable-model-invocation: false
 ---
 
 Follow these steps in order:
