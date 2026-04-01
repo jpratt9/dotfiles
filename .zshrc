@@ -75,6 +75,15 @@ eval "$(pyenv init -)"
 
 nvm use 24
 
+# Block terraform taint
+terraform() {
+    if [[ "$1" == "taint" ]]; then
+        echo "Command not allowed"
+        return 1
+    fi
+    command terraform "$@"
+}
+
 # stop asking for keychain on login
 if [ -n "$SSH_CONNECTION" ]; then
   security unlock-keychain ~/Library/Keychains/login.keychain-db
