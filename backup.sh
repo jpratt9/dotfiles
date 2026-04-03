@@ -20,7 +20,7 @@ cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks"
 rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/claude-skills/"
 
 # Check for changes
-if git diff --quiet; then
+if [ -z "$(git status -s)" ]; then
     log "No changes to backup"
     exit 0
 fi
