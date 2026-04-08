@@ -89,3 +89,6 @@ if [ -n "$SSH_CONNECTION" ]; then
   security unlock-keychain ~/Library/Keychains/login.keychain-db
 fi
 export AWS_PROFILE=tf
+
+# Added by Antigravity
+export PATH="/Users/john/.antigravity/antigravity/bin:$PATH"
