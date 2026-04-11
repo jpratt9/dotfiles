@@ -75,10 +75,14 @@ eval "$(pyenv init -)"
 
 nvm use 24
 
-# Block terraform taint
+# Block destructive terraform commands
 terraform() {
     if [[ "$1" == "taint" ]]; then
-        echo "Command not allowed"
+        echo "BLOCKED: terraform taint is disabled."
+        return 1
+    fi
+    if [[ "$*" == *"-replace"* ]]; then
+        echo "BLOCKED: -replace is disabled. It destroys and recreates resources, which can nuke permissions/policies."
         return 1
     fi
     command terraform "$@"
