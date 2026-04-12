@@ -416,7 +416,10 @@ def download_key(project_id, sa_email):
                 log(f"Key file already exists: {key_path}")
                 return key_path
         except (json.JSONDecodeError, KeyError):
-            pass
+            # Corrupt or mismatched key — back it up before overwriting
+            backup_path = key_path + f".bak.{int(time.time())}"
+            os.rename(key_path, backup_path)
+            log(f"Backed up corrupt/mismatched key to {backup_path}")
 
     _, stderr, rc = run([
         "gcloud", "iam", "service-accounts", "keys", "create", key_path,
