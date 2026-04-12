@@ -538,45 +538,42 @@ except Exception as e:
 
     log(f"Key verified: token acquired successfully ({result.get('token_prefix', '?')})")
 
-    # If we have shared resources, verify we can actually read them
-    for share in shared_resources:
-        if share.get("status") != "shared":
-            continue
-        resource_id = share["resource_id"]
-        verify_access_script = f"""
+    # Verify shared resource access using the SA token via HTTP
+    if shared_resources:
+        # Use the requested API scopes + drive.readonly for file metadata access
+        verify_scopes = list(set(scopes + ['https://www.googleapis.com/auth/drive.readonly']))
+        token_script = f"""
 import json
 from google.oauth2.service_account import Credentials
-from googleapiclient.discovery import build
-
 creds = Credentials.from_service_account_file(
     '{key_path}',
-    scopes={json.dumps(scopes)}
+    scopes={json.dumps(verify_scopes)}
 )
-try:
-    sheets = build('sheets', 'v4', credentials=creds)
-    meta = sheets.spreadsheets().get(spreadsheetId='{resource_id}').execute()
-    title = meta.get('properties', {{}}).get('title', 'unknown')
-    print(json.dumps({{"status": "ok", "title": title}}))
-except Exception as e:
-    # Try Drive API as fallback (might not be a sheet)
-    try:
-        drive = build('drive', 'v3', credentials=creds)
-        f = drive.files().get(fileId='{resource_id}', fields='name').execute()
-        print(json.dumps({{"status": "ok", "title": f.get('name', 'unknown')}}))
-    except Exception as e2:
-        print(json.dumps({{"status": "error", "message": str(e2)}}))
+creds.refresh(__import__('google.auth.transport.requests', fromlist=['Request']).Request())
+print(creds.token)
 """
-        stdout2, _, rc2 = run(["python3", "-c", verify_access_script], check=False)
-        try:
-            access_result = json.loads(stdout2)
-        except (json.JSONDecodeError, ValueError):
-            log(f"  Warning: Could not verify access to {resource_id}")
-            continue
+        sa_token, _, _ = run(["python3", "-c", token_script], check=False)
 
-        if access_result.get("status") == "ok":
-            log(f"  Verified access to resource: {access_result.get('title', resource_id)}")
-        else:
-            log(f"  Warning: Cannot access {resource_id}: {access_result.get('message')}")
+        if sa_token:
+            for share in shared_resources:
+                if share.get("status") != "shared":
+                    continue
+                resource_id = share["resource_id"]
+                # files.get is the universal metadata endpoint for all
+                # Google Workspace resources (not Drive-specific)
+                stdout2, _, _ = run([
+                    "curl", "-s",
+                    f"https://www.googleapis.com/drive/v3/files/{resource_id}?fields=name,mimeType",
+                    "-H", f"Authorization: Bearer {sa_token}",
+                ], check=False)
+                try:
+                    meta = json.loads(stdout2)
+                    if "name" in meta:
+                        log(f"  Verified access to: {meta['name']} ({meta.get('mimeType', '?')})")
+                    elif "error" in meta:
+                        log(f"  Warning: Cannot access {resource_id}: {meta['error'].get('message', '?')}")
+                except (json.JSONDecodeError, ValueError):
+                    log(f"  Warning: Could not verify access to {resource_id}")
 
     return True
 
