@@ -456,10 +456,33 @@ def download_key(project_id, sa_email):
     return key_path
 
 
+def get_my_role(token, resource_id):
+    """Check what role the current user has on a resource."""
+    stdout, _, rc = run([
+        "curl", "-s",
+        f"https://www.googleapis.com/drive/v3/files/{resource_id}?fields=capabilities",
+        "-H", f"Authorization: Bearer {token}",
+    ], check=False)
+    if rc != 0:
+        return "reader"
+    try:
+        data = json.loads(stdout)
+        caps = data.get("capabilities", {})
+        if caps.get("canEdit", False):
+            return "writer"
+        return "reader"
+    except (json.JSONDecodeError, ValueError):
+        return "reader"
+
+
 def share_google_resource(token, resource_id, sa_email):
-    """Share a Google resource with the service account (reader — least privilege)."""
+    """Share a Google resource with the SA, mirroring the current user's access level."""
+    # Detect what access the authed user has, and mirror it to the SA
+    role = get_my_role(token, resource_id)
+    log(f"Current user has '{role}' access — granting same to SA")
+
     data = json.dumps({
-        "role": "reader",
+        "role": role,
         "type": "user",
         "emailAddress": sa_email,
     })
@@ -481,7 +504,6 @@ def share_google_resource(token, resource_id, sa_email):
         raise RuntimeError(f"Unexpected response sharing {resource_id}: {stdout}")
 
     if "error" in resp:
-        # If already shared, that's fine
         err_msg = json.dumps(resp["error"])
         if "already has access" in err_msg.lower():
             log(f"Resource {resource_id} already shared with {sa_email}")
@@ -673,7 +695,7 @@ def main():
                 try:
                     share_google_resource(token, resource_id, sa_email)
                     shared.append({"resource_id": resource_id, "status": "shared"})
-                    log(f"Shared {resource_id} with {sa_email} (reader)")
+                    log(f"Shared {resource_id} with {sa_email}")
                 except Exception as e:
                     shared.append({
                         "resource_id": resource_id,
