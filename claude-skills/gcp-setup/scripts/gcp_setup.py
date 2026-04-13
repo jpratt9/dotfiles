@@ -19,6 +19,11 @@ import time
 
 KEY_DIR = os.path.expanduser("~/.config/gcp-keys")
 
+
+class OrgPolicyBlockError(RuntimeError):
+    """Raised when an org-level policy blocks SA key creation."""
+    pass
+
 API_MAP = {
     "sheets": "sheets.googleapis.com",
     "drive": "drive.googleapis.com",
@@ -97,12 +102,19 @@ def extract_resource_id(value):
 
 
 def get_token():
-    """Get current gcloud auth token."""
+    """Get current gcloud auth token, auto-recovering from expired sessions."""
     stdout, stderr, rc = run(["gcloud", "auth", "print-access-token"], check=False)
-    if rc != 0:
-        raise RuntimeError(
-            "Not authenticated. Run: gcloud auth login --enable-gdrive-access"
-        )
+    if rc == 0:
+        return stdout
+
+    # Token expired — launch browser login (needs interactive stdin/stdout)
+    log("Auth expired. Launching browser login...")
+    rc4 = subprocess.call(["gcloud", "auth", "login", "--enable-gdrive-access"])
+    if rc4 != 0:
+        raise RuntimeError("Authentication failed. Could not complete browser login.")
+    stdout, _, rc5 = run(["gcloud", "auth", "print-access-token"], check=False)
+    if rc5 != 0:
+        raise RuntimeError("Authentication succeeded but could not get token.")
     return stdout
 
 
@@ -445,13 +457,8 @@ def download_key(project_id, sa_email):
     ], check=False)
 
     if rc2 != 0:
-        raise RuntimeError(
-            f"Key creation still blocked after overriding all known constraints.\n"
-            f"{stderr2}\n\n"
-            f"This likely means the constraint is enforced at the organization level "
-            f"and your account doesn't have permission to override it.\n"
-            f"Fix: Ask your org admin to add an exception, or use a project in a "
-            f"different org/personal account."
+        raise OrgPolicyBlockError(
+            f"Key creation blocked by org policy after all override attempts.\n{stderr2}"
         )
 
     os.chmod(key_path, 0o600)
@@ -603,6 +610,121 @@ print(creds.token)
     return True
 
 
+def find_personal_account():
+    """Find a personal Gmail account from gcloud auth list to avoid org policies."""
+    stdout, _, rc = run(["gcloud", "auth", "list", "--format=json"], check=False)
+    if rc != 0:
+        return None
+    try:
+        accounts = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+
+    current, _, _ = run(["gcloud", "config", "get-value", "account"], check=False)
+
+    for acct in accounts:
+        email = acct.get("account", "")
+        if email == current:
+            continue  # skip the one that just failed
+        if email.endswith("@gmail.com"):
+            return email
+    return None
+
+
+def find_token_with_access(resource_id):
+    """Try all authenticated gcloud accounts to find one that can access a Drive resource."""
+    stdout, _, rc = run(["gcloud", "auth", "list", "--format=json"], check=False)
+    if rc != 0:
+        return None
+    try:
+        accounts = json.loads(stdout)
+    except json.JSONDecodeError:
+        return None
+
+    original, _, _ = run(["gcloud", "config", "get-value", "account"], check=False)
+    found_token = None
+
+    for acct in accounts:
+        email = acct.get("account", "")
+        if not email:
+            continue
+        run(["gcloud", "config", "set", "account", email], check=False)
+        token_stdout, _, token_rc = run(["gcloud", "auth", "print-access-token"], check=False)
+        if token_rc != 0:
+            continue
+        check_stdout, _, _ = run([
+            "curl", "-s",
+            f"https://www.googleapis.com/drive/v3/files/{resource_id}?fields=name",
+            "-H", f"Authorization: Bearer {token_stdout}",
+        ], check=False)
+        try:
+            data = json.loads(check_stdout)
+            if "name" in data:
+                log(f"Account {email} has access to resource (file: {data['name']})")
+                found_token = token_stdout
+                break
+        except (json.JSONDecodeError, ValueError):
+            continue
+
+    # Restore original account
+    if original:
+        run(["gcloud", "config", "set", "account", original], check=False)
+    return found_token
+
+
+def setup_project(project_id, apis, shares):
+    """Run the full setup flow: create project, enable APIs, create SA, download key, share."""
+    token = get_token()
+    project_id = create_project(project_id)
+    enabled = enable_apis(project_id, apis)
+    sa_email = get_service_account(project_id)
+    time.sleep(2)
+    key_path = download_key(project_id, sa_email)
+
+    shared = []
+    if shares:
+        token = get_token()
+        for share_info in shares:
+            resource_id = share_info["id"]
+            try:
+                share_google_resource(token, resource_id, sa_email)
+                shared.append({"resource_id": resource_id, "status": "shared"})
+                log(f"Shared {resource_id} with {sa_email}")
+            except Exception as e:
+                err_str = str(e).lower()
+                if "404" in err_str or "not found" in err_str or "notfound" in err_str:
+                    log(f"Resource {resource_id} not accessible with current account, trying all accounts...")
+                    alt_token = find_token_with_access(resource_id)
+                    if alt_token:
+                        try:
+                            share_google_resource(alt_token, resource_id, sa_email)
+                            shared.append({"resource_id": resource_id, "status": "shared"})
+                            log(f"Shared {resource_id} with {sa_email}")
+                            continue
+                        except Exception as e2:
+                            e = e2
+                    else:
+                        log(f"No authenticated account has access to {resource_id}")
+                shared.append({
+                    "resource_id": resource_id,
+                    "status": f"error: {e}",
+                })
+                log(f"Warning: Could not share {resource_id}: {e}")
+
+    try:
+        verify_key(key_path, apis, shared)
+    except RuntimeError as e:
+        if "invalid_grant" in str(e) or "Invalid JWT" in str(e):
+            log("Key is stale/invalid (project may have been restored). Re-downloading...")
+            os.remove(key_path)
+            key_path = download_key(project_id, sa_email)
+            verify_key(key_path, apis, shared)
+        else:
+            raise
+
+    return project_id, sa_email, key_path, enabled, shared
+
+
 def parse_args(raw_args):
     """Parse the argument string into components."""
     args = raw_args.strip()
@@ -673,50 +795,26 @@ def main():
             sys.exit(1)
 
     try:
-        # Step 1: Ensure we have auth
-        token = get_token()
-
-        # Step 2: Create or reuse project (may change project_id if original is zombie)
-        project_id = create_project(project_id)
-
-        # Step 3: Enable APIs
-        enabled = enable_apis(project_id, apis)
-
-        # Step 4: Create service account
-        sa_email = get_service_account(project_id)
-        time.sleep(2)
-
-        # Step 5: Download key file
-        key_path = download_key(project_id, sa_email)
-
-        # Step 6: Share resources with SA (reader — least privilege)
-        shared = []
-        if shares:
-            token = get_token()
-            for share_info in shares:
-                resource_id = share_info["id"]
-                try:
-                    share_google_resource(token, resource_id, sa_email)
-                    shared.append({"resource_id": resource_id, "status": "shared"})
-                    log(f"Shared {resource_id} with {sa_email}")
-                except Exception as e:
-                    shared.append({
-                        "resource_id": resource_id,
-                        "status": f"error: {e}",
-                    })
-                    log(f"Warning: Could not share {resource_id}: {e}")
-
-        # Step 7: VERIFY the key actually works — if not, delete and re-download
         try:
-            verify_key(key_path, apis, shared)
-        except RuntimeError as e:
-            if "invalid_grant" in str(e) or "Invalid JWT" in str(e):
-                log("Key is stale/invalid (project may have been restored). Re-downloading...")
-                os.remove(key_path)
-                key_path = download_key(project_id, sa_email)
-                verify_key(key_path, apis, shared)
-            else:
-                raise
+            project_id, sa_email, key_path, enabled, shared = setup_project(
+                project_id, apis, shares
+            )
+        except OrgPolicyBlockError:
+            # Org policy blocks SA key creation — switch to a personal Gmail account
+            personal = find_personal_account()
+            if not personal:
+                raise RuntimeError(
+                    "Org policy blocks SA key creation and no personal Gmail account "
+                    "found in gcloud auth list. Run: gcloud auth login "
+                    "with a @gmail.com account to add one."
+                )
+            log(f"Org policy blocked key creation. Switching to personal account: {personal}")
+            run(["gcloud", "config", "set", "account", personal])
+            # Use a different project name to avoid org-owned project conflicts
+            personal_project_id = f"{project_id}-personal"
+            project_id, sa_email, key_path, enabled, shared = setup_project(
+                personal_project_id, apis, shares
+            )
 
         # Build scopes list for the usage snippet
         scopes = [API_SCOPES.get(a.strip().lower(), f"https://www.googleapis.com/auth/{a}")
