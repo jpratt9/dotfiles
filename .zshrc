@@ -94,5 +94,9 @@ if [ -n "$SSH_CONNECTION" ]; then
 fi
 export AWS_PROFILE=tf
 
+# Claude Code
+export CLAUDE_CODE_EFFORT_LEVEL=max
+export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
+
 # Added by Antigravity
 export PATH="/Users/john/.antigravity/antigravity/bin:$PATH"
