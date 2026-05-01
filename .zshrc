@@ -75,6 +75,15 @@ eval "$(pyenv init -)"
 
 nvm use 24
 
+# Block git clone into /tmp — clones go in ~/dev
+git() {
+    if [[ "$1" == "clone" && "$PWD" == /tmp* ]]; then
+        echo "Clone into ~/dev, not /tmp." >&2
+        return 1
+    fi
+    command git "$@"
+}
+
 # Block destructive terraform commands
 terraform() {
     if [[ "$1" == "taint" ]]; then
