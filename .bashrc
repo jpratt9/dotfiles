@@ -187,6 +187,7 @@ execb() {
 }
 
 export AWS_PROFILE=tf
+export POSTGRES_PORT=5433
 
 # always use latest nodejs
 nvm use v24.9.0 > /dev/null
