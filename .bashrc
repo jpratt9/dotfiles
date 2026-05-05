@@ -116,9 +116,25 @@ if ! shopt -oq posix; then
   fi
 fi
 
+alias python="python3"
+alias open="explorer.exe"
+alias claude="claude --append-system-prompt \"Never run git commands without explicit permission. If you are told to 'plan' something, write your plan to a file first before proceeding with implementation. If you ignore any of the user's instructions, you have failed. Unless you are told otherwise, whenever you modify code, you MUST re-run existing unit tests + add new tests for your new code - and if any tests fail, keep fixing your code until they don't. Unless instructed otherwise, whenever you use an external python library, you must inspect the \'requirements.txt\' file(s) for the project + make sure they're listed there + run a \'pip install -r requirements.txt\' to make sure it's actually installed to the system.\""
+
+
+
 export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"  # This loads nvm
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
+
+pip() {
+  if [[ "$1" == "install" ]]; then
+    command pip install --break-system-packages "${@:2}"
+  elif [[ "$1" == "i" ]]; then
+    command pip install --break-system-packages "${@:2}"
+  else
+    command pip "$@"
+  fi
+}
 
 gp() {
     if [ -z "$1" ]; then
@@ -157,6 +173,10 @@ co() {
     fi
     code .
 }
+tfapply() {
+    terraform plan
+    terraform apply -auto-approve
+}
 
 bashrc() {
     code ~/.bashrc
@@ -165,3 +185,17 @@ bashrc() {
 execb() {
     exec bash
 }
+
+export AWS_PROFILE=tf
+
+# always use latest nodejs
+nvm use v24.9.0 > /dev/null
+export PIP_BREAK_SYSTEM_PACKAGES=1
+
+# make terminal title current folder name
+export PS1="\[\e]0;\W\a\]${debian_chroot:+($debian_chroot)}\[\033[01;32m\]\u@\h\[\033[00m\]:\[\033[01;34m\]\w\[\033[00m\]\$ "
+
+# Report current directory to terminal so new tabs open in same folder (WSL/Windows Terminal)
+PROMPT_COMMAND=${PROMPT_COMMAND:+$PROMPT_COMMAND; }'printf "\e]9;9;%s\e\\" "$(wslpath -w "$PWD" 2>/dev/null || echo "$PWD")"'
+
+cd ~/dev
