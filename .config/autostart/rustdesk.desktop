@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=RustDesk
+Comment=Start RustDesk tray + main window on login
+Exec=sh -c "rustdesk --tray & sleep 2 && rustdesk"
+Icon=rustdesk
+Terminal=false
+X-GNOME-Autostart-enabled=true
+Hidden=false
