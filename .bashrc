@@ -116,7 +116,18 @@ if ! shopt -oq posix; then
   fi
 fi
 
-alias python="python3"
+# Use nearest .venv/bin/python (walks up from $PWD), else fall back to python3
+python() {
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    if [ -x "$d/.venv/bin/python" ]; then
+      "$d/.venv/bin/python" "$@"
+      return
+    fi
+    d="$(dirname "$d")"
+  done
+  command python3 "$@"
+}
 alias open="explorer.exe"
 alias claude="claude --append-system-prompt \"Never run git commands without explicit permission. If you are told to 'plan' something, write your plan to a file first before proceeding with implementation. If you ignore any of the user's instructions, you have failed. Unless you are told otherwise, whenever you modify code, you MUST re-run existing unit tests + add new tests for your new code - and if any tests fail, keep fixing your code until they don't. Unless instructed otherwise, whenever you use an external python library, you must inspect the \'requirements.txt\' file(s) for the project + make sure they're listed there + run a \'pip install -r requirements.txt\' to make sure it's actually installed to the system.\""
 
