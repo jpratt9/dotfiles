@@ -1,0 +1,3 @@
+[Configuration]
+MiscScrollbackUnlimited=TRUE
+ScrollingLines=100000
