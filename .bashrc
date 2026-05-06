@@ -138,9 +138,16 @@ export NVM_DIR="$HOME/.nvm"
 [ -s "$NVM_DIR/bash_completion" ] && \. "$NVM_DIR/bash_completion"  # This loads nvm bash_completion
 
 pip() {
-  if [[ "$1" == "install" ]]; then
-    command pip install --break-system-packages "${@:2}"
-  elif [[ "$1" == "i" ]]; then
+  local d="$PWD"
+  while [ "$d" != "/" ]; do
+    if [ -x "$d/.venv/bin/pip" ]; then
+      "$d/.venv/bin/pip" "$@"
+      return
+    fi
+    d="$(dirname "$d")"
+  done
+  # outside any project venv: fall back to system pip with PEP 668 override
+  if [[ "$1" == "install" || "$1" == "i" ]]; then
     command pip install --break-system-packages "${@:2}"
   else
     command pip "$@"
