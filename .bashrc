@@ -116,7 +116,8 @@ if ! shopt -oq posix; then
   fi
 fi
 
-# Use nearest .venv/bin/python (walks up from $PWD), else fall back to python3
+# Use nearest .venv/bin/python (walks up from $PWD), else fall back to python3.
+# Aliased as both `python` and `python3` so calls to either go through the venv.
 python() {
   local d="$PWD"
   while [ "$d" != "/" ]; do
@@ -128,6 +129,7 @@ python() {
   done
   command python3 "$@"
 }
+python3() { python "$@"; }
 alias open="explorer.exe"
 alias claude="claude --append-system-prompt \"Never run git commands without explicit permission. If you are told to 'plan' something, write your plan to a file first before proceeding with implementation. If you ignore any of the user's instructions, you have failed. Unless you are told otherwise, whenever you modify code, you MUST re-run existing unit tests + add new tests for your new code - and if any tests fail, keep fixing your code until they don't. Unless instructed otherwise, whenever you use an external python library, you must inspect the \'requirements.txt\' file(s) for the project + make sure they're listed there + run a \'pip install -r requirements.txt\' to make sure it's actually installed to the system.\""
 
@@ -153,6 +155,7 @@ pip() {
     command pip "$@"
   fi
 }
+pip3() { pip "$@"; }
 
 gp() {
     if [ -z "$1" ]; then
