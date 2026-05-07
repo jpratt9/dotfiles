@@ -116,8 +116,9 @@ if ! shopt -oq posix; then
   fi
 fi
 
-# Use nearest .venv/bin/python (walks up from $PWD), else fall back to python3.
-# Aliased as both `python` and `python3` so calls to either go through the venv.
+# Use nearest .venv/bin/python (walks up from $PWD), else fall back to the
+# clip_fixer venv (so daemons launched outside the project tree still work),
+# else system python3.
 python() {
   local d="$PWD"
   while [ "$d" != "/" ]; do
@@ -127,6 +128,10 @@ python() {
     fi
     d="$(dirname "$d")"
   done
+  if [ -x "$HOME/dev/clip_fixer/.venv/bin/python" ]; then
+    "$HOME/dev/clip_fixer/.venv/bin/python" "$@"
+    return
+  fi
   command python3 "$@"
 }
 python3() { python "$@"; }
