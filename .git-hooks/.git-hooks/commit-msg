@@ -1,10 +1,16 @@
 #!/bin/bash
+# Portable in-place sed (BSD requires '', GNU rejects it)
+if sed --version >/dev/null 2>&1; then
+    SED_I=(-i)
+else
+    SED_I=(-i '')
+fi
 
 # Strip any Co-Authored-By lines from commit messages
-sed -i '' '/Co-Authored-By/d' "$1"
+sed "${SED_I[@]}" '/Co-Authored-By/d' "$1"
 
 # Prepend [chore] if no conventional commit tag is present
 MSG=$(head -1 "$1")
 if ! echo "$MSG" | grep -qE '^\[(feat|fix|chore|refactor|docs|test|style|perf|ci|build|revert)\]'; then
-    sed -i '' "1s/^/[chore] /" "$1"
+    sed "${SED_I[@]}" "1s/^/[chore] /" "$1"
 fi
