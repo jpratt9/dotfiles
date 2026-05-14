@@ -33,7 +33,6 @@ def download_video(url: str) -> dict:
     title = info.get("title", "Unknown")
     duration = info.get("duration", 0)
     duration_str = f"{duration // 60}m {duration % 60}s" if duration else "unknown"
-    ext = info.get("ext", "mp4")
     platform = detect_platform(url)
 
     # Sanitize title for filename
@@ -42,7 +41,10 @@ def download_video(url: str) -> dict:
         safe_title = "video"
 
     download_dir = os.path.expanduser("~/Downloads")
-    output_path = os.path.join(download_dir, f"{safe_title}.{ext}")
+    # Use .mp4 directly since --merge-output-format mp4 forces the container.
+    # Passing the source ext (e.g. .webm) here causes yt-dlp to write Title.webm.mp4
+    # because the template's literal extension stays and the merge tacks on .mp4.
+    output_path = os.path.join(download_dir, f"{safe_title}.mp4")
 
     # Download best quality
     result = subprocess.run(
@@ -54,19 +56,14 @@ def download_video(url: str) -> dict:
     if result.returncode != 0:
         return {"error": f"Download failed: {result.stderr.strip()}"}
 
-    # yt-dlp may change the extension to mp4 due to merge
+    # Defensive fallback: if .mp4 isn't where we expected, find what yt-dlp actually wrote.
     if not os.path.exists(output_path):
-        mp4_path = os.path.splitext(output_path)[0] + ".mp4"
-        if os.path.exists(mp4_path):
-            output_path = mp4_path
+        candidates = [f for f in os.listdir(download_dir)
+                      if f.startswith(safe_title) and not f.endswith(".json")]
+        if candidates:
+            output_path = os.path.join(download_dir, candidates[0])
         else:
-            # Find whatever file yt-dlp actually wrote
-            candidates = [f for f in os.listdir(download_dir)
-                          if f.startswith(safe_title) and not f.endswith(".json")]
-            if candidates:
-                output_path = os.path.join(download_dir, candidates[0])
-            else:
-                return {"error": "Download appeared to succeed but output file not found."}
+            return {"error": "Download appeared to succeed but output file not found."}
 
     return {
         "title": title,
