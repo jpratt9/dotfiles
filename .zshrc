@@ -104,7 +104,8 @@ fi
 export AWS_PROFILE=tf
 
 # Claude Code
-export CLAUDE_CODE_EFFORT_LEVEL=max
+# Effort is controlled by the /effort command (currently "high"); leaving this
+# unset so /effort isn't overridden. (was: export CLAUDE_CODE_EFFORT_LEVEL=max)
 export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
 
 # Added by Antigravity
