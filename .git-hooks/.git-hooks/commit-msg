@@ -8,3 +8,15 @@ MSG=$(head -1 "$1")
 if ! echo "$MSG" | grep -qE '^\[(feat|fix|chore|refactor|docs|test|style|perf|ci|build|revert)\]'; then
     sed -i '' "1s/^/[chore] /" "$1"
 fi
+
+# Strip LLM-style em-dashes (U+2014) / en-dashes (U+2013), normalize to " - ".
+# Mirrors the regex in john-pratt.com lambda_function.py:504-506.
+#
+# Why perl + -CSDA instead of sed:
+#   - BSD sed (macOS) has flaky UTF-8 handling — bracket classes containing
+#     multi-byte chars can mis-match or throw "illegal byte sequence".
+#   - [[:space:]] matches newlines, which would merge paragraphs if a dash
+#     happened to land at end-of-line. [ \t] is the safe class.
+#   - perl -CSDA decodes stdin/argv/script as UTF-8 (perlunicook recipe #2)
+#     and \x{2014}/\x{2013} are codepoint-explicit so the script is grep-able.
+perl -CSDA -i -pe 's/[ \t]*[\x{2014}\x{2013}][ \t]*/ - /g' "$1"
