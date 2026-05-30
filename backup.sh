@@ -4,6 +4,9 @@
 DOTFILES_DIR="$HOME/dev/dotfiles"
 LOG_FILE="$DOTFILES_DIR/backup.log"
 
+# Optional custom commit message ($1); defaults to the automatic-backup format
+COMMIT_MSG="${1:-automatic backup $(date '+%Y-%m-%d %H:%M')}"
+
 log() {
     echo "[$(date '+%Y-%m-%d %H:%M:%S')] $1" >> "$LOG_FILE"
 }
@@ -19,6 +22,10 @@ cp ~/.zprofile "$DOTFILES_DIR/.zprofile"
 cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks"
 rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/claude-skills/"
 
+# Gemini CLI memory file only (NOT the whole ~/.gemini — it holds oauth creds)
+mkdir -p "$DOTFILES_DIR/.gemini"
+cp ~/.gemini/GEMINI.md "$DOTFILES_DIR/.gemini/GEMINI.md"
+
 # Check for changes
 if [ -z "$(git status -s)" ]; then
     log "No changes to backup"
@@ -27,7 +34,7 @@ fi
 
 # Commit and push
 git add -A
-git commit -m "automatic backup $(date '+%Y-%m-%d %H:%M')"
+git commit -m "$COMMIT_MSG"
 if git push; then
     log "Backup successful"
 else
