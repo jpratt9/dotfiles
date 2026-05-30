@@ -1,0 +1,30 @@
+{
+  "permissions": {
+    "defaultMode": "auto"
+  },
+  "model": "opus[1m]",
+  "enabledPlugins": {
+    "swift-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {},
+  "sandbox": {
+    "enabled": false
+  },
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "verbose": true,
+  "skipAutoPermissionPrompt": true,
+  "hooks": {
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "exit 0; MSG=$(jq -r '(.last_assistant_message // empty) | gsub(\"[*][*]\";\"\")'); [ -z \"$MSG\" ] && exit 0; { arch -arm64 python3 /Users/john/.gemini/skills/kokoro-tts/scripts/kokoro_tts.py \"$MSG\" \"af_heart\" | ffplay -f s16le -ar 24000 -nodisp -autoexit -; } >/dev/null 2>&1 &",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

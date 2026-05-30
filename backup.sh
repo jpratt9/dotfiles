@@ -24,6 +24,8 @@ mkdir -p "$DOTFILES_DIR/.claude"
 rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/.claude/skills/"
 cp ~/.claude/settings.json "$DOTFILES_DIR/.claude/settings.json"
 cp ~/.claude/CLAUDE.md "$DOTFILES_DIR/.claude/CLAUDE.md"
+# ~/.gitignore_global excludes .claude/, so force-add this backup copy
+git add -f "$DOTFILES_DIR/.claude"
 
 # Gemini CLI memory file only (NOT the whole ~/.gemini — it holds oauth creds)
 mkdir -p "$DOTFILES_DIR/.gemini"
