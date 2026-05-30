@@ -20,7 +20,10 @@ git pull --rebase
 cp ~/.zshrc "$DOTFILES_DIR/.zshrc"
 cp ~/.zprofile "$DOTFILES_DIR/.zprofile"
 cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks"
-rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/claude-skills/"
+mkdir -p "$DOTFILES_DIR/.claude"
+rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/.claude/skills/"
+cp ~/.claude/settings.json "$DOTFILES_DIR/.claude/settings.json"
+cp ~/.claude/CLAUDE.md "$DOTFILES_DIR/.claude/CLAUDE.md"
 
 # Gemini CLI memory file only (NOT the whole ~/.gemini — it holds oauth creds)
 mkdir -p "$DOTFILES_DIR/.gemini"
