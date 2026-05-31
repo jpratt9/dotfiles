@@ -7,6 +7,11 @@ This skill provides high-fidelity neural text-to-speech using the Kokoro-82M mod
 - It requires `kokoro-onnx` and `soundfile` Python packages.
 - Model files are stored in `~/.gemini/kokoro/`.
 
+## Constraints
+- NO core message.
+- ONLY read the LITERAL text.
+- DO NOT SUMMARIZE.
+
 ## Voice Options
 - `af_heart` (Default)
 - `af_bella`
