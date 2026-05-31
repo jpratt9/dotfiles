@@ -21,11 +21,15 @@ cp ~/.zshrc "$DOTFILES_DIR/.zshrc"
 cp ~/.zprofile "$DOTFILES_DIR/.zprofile"
 cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks"
 mkdir -p "$DOTFILES_DIR/.claude"
-rsync -a --delete ~/.claude/skills/ "$DOTFILES_DIR/.claude/skills/"
 cp ~/.claude/settings.json "$DOTFILES_DIR/.claude/settings.json"
 cp ~/.claude/CLAUDE.md "$DOTFILES_DIR/.claude/CLAUDE.md"
 # ~/.gitignore_global excludes .claude/, so force-add this backup copy
 git add -f "$DOTFILES_DIR/.claude"
+
+# Skills now live in the shared ~/.agents source-of-truth dir (symlinked from
+# ~/.claude/skills, ~/.gemini/skills, ~/.gemini/antigravity/skills)
+mkdir -p "$DOTFILES_DIR/.agents"
+rsync -a --delete ~/.agents/skills/ "$DOTFILES_DIR/.agents/skills/"
 
 # Gemini CLI memory file only (NOT the whole ~/.gemini — it holds oauth creds)
 mkdir -p "$DOTFILES_DIR/.gemini"
