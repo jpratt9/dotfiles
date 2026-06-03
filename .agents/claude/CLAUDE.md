@@ -27,6 +27,8 @@ For Terraform, NEVER replace/delete infra unless you ABSOLUTELY NEED TO or ARE T
 
 Never use Claude Haiku. When calling the Claude API, default to Opus 4.7 (claude-opus-4-7) with fallback to Opus 4.6 (claude-opus-4-6).
 
+When giving the user 'one-off' commands to run on his machine, always make it a 'one-liner' whenever possible.
+
 # Behavioral Guidelines
 
 ## 1. Think Before Coding
