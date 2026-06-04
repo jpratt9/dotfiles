@@ -3,17 +3,6 @@
     "defaultMode": "auto"
   },
   "model": "opus[1m]",
-  "enabledPlugins": {
-    "swift-lsp@claude-plugins-official": true
-  },
-  "extraKnownMarketplaces": {},
-  "sandbox": {
-    "enabled": false
-  },
-  "effortLevel": "high",
-  "skipDangerousModePermissionPrompt": true,
-  "verbose": true,
-  "skipAutoPermissionPrompt": true,
   "hooks": {
     "Stop": [
       {
@@ -26,5 +15,17 @@
         ]
       }
     ]
-  }
+  },
+  "enabledPlugins": {
+    "swift-lsp@claude-plugins-official": true
+  },
+  "extraKnownMarketplaces": {},
+  "sandbox": {
+    "enabled": false
+  },
+  "effortLevel": "high",
+  "skipDangerousModePermissionPrompt": true,
+  "verbose": true,
+  "skipAutoPermissionPrompt": true,
+  "skipWorkflowUsageWarning": true
 }
