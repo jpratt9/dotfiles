@@ -2,11 +2,23 @@
 """Fetch YouTube video transcript using yt-dlp, with Groq Whisper fallback."""
 
 import json
+import shutil
 import subprocess
 import sys
 import re
 import tempfile
 import os
+
+# yt-dlp 2026+ needs three things to fully load a YouTube video:
+#   1. A JS runtime (we point at the node we have so no new install needed)
+#   2. The EJS challenge-solver script (auto-downloaded + cached on first use)
+#   3. Cookies from a logged-in browser to clear the bot wall
+_NODE = shutil.which("node") or "/Users/john/.nvm/versions/node/v24.9.0/bin/node"
+JS_RUNTIME_FLAGS = [
+    "--js-runtimes", f"node:{_NODE}",
+    "--remote-components", "ejs:github",
+    "--cookies-from-browser", "chrome",
+]
 
 
 def fetch_transcript(url: str) -> dict:
@@ -14,7 +26,7 @@ def fetch_transcript(url: str) -> dict:
 
     # Get video metadata first
     result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-download", url],
+        ["yt-dlp", *JS_RUNTIME_FLAGS, "--dump-json", "--no-download", url],
         capture_output=True, text=True, timeout=60
     )
     if result.returncode != 0:
@@ -35,7 +47,7 @@ def fetch_transcript(url: str) -> dict:
             ["--write-auto-subs", "--sub-langs", "en.*,-live_chat", "--skip-download"],
         ]:
             result = subprocess.run(
-                ["yt-dlp", *sub_flag, "--sub-format", "vtt/srt/best",
+                ["yt-dlp", *JS_RUNTIME_FLAGS, *sub_flag, "--sub-format", "vtt/srt/best",
                  "--convert-subs", "srt", "-o", out_path, url],
                 capture_output=True, text=True, timeout=60
             )
@@ -84,7 +96,7 @@ def transcribe_with_groq(url: str, tmpdir: str, duration: int) -> str | None:
     # Download audio
     audio_path = os.path.join(tmpdir, "audio.mp3")
     result = subprocess.run(
-        ["yt-dlp", "-x", "--audio-format", "mp3", "-o", audio_path, url],
+        ["yt-dlp", *JS_RUNTIME_FLAGS, "-x", "--audio-format", "mp3", "-o", audio_path, url],
         capture_output=True, text=True, timeout=300
     )
     if result.returncode != 0 or not os.path.exists(audio_path):
