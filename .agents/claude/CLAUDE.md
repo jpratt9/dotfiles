@@ -31,6 +31,8 @@ Never use Claude Haiku. When calling the Claude API, default to Opus 4.7 (claude
 
 When giving the user 'one-off' commands to run, always make it a 'one-liner' whenever possible.
 
+NEVER run unit/integration/functional tests when the user just tells you to audit a codebase for migration - testing will be handled AFTER the migration actually begins.
+
 # Behavioral Guidelines
 
 ## 1. Think Before Coding
