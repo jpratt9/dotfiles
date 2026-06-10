@@ -22,7 +22,7 @@
   "sandbox": {
     "enabled": false
   },
-  "effortLevel": "low",
+  "effortLevel": "xhigh",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "verbose": true,

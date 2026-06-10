@@ -7,7 +7,17 @@ allowed-tools: Bash, WebSearch
 
 Draft a freelance proposal — a cover letter plus a suggested hourly rate — for the job posting in `$ARGUMENTS`, in John's voice. Then save and open it **with the script** (see **Save & open** — do NOT use the Write tool).
 
-## Who John actually is (don't drift from this)
+## Read John's resume FIRST (source of truth)
+
+Before writing anything, extract his actual resume and treat it as the authoritative record of his experience:
+
+```
+pdftotext "$HOME/Downloads/John Pratt short ATS resume Jun 2026.pdf" -
+```
+
+Ground every experience claim in that resume — the roles, employers, technologies, and accomplishments it actually lists. Pull the specific, relevant bullets that map onto the job post; do not invent experience that isn't on it. If the `pdftotext` command fails (file moved/renamed), STOP and tell John rather than guessing his background.
+
+## Who John actually is (anchor — the resume overrides this if they conflict)
 
 - Senior **backend / data engineer**, ~10 YOE, Fortune 500 (Capital One, Lockheed).
 - Bread and butter: **data pipelines** — reliable, scheduled, clean structured output.
@@ -23,6 +33,7 @@ Draft a freelance proposal — a cover letter plus a suggested hourly rate — f
   - ✅ "For something you're running every day, what matters is that it stays correct — so we'd..."
   - Keep "I" light — a credential line and the odd "I'd build / I'll send" are fine; the outcome and the plan lean on you/we.
 - **NOT salesy. It's a plain email between two competent people, not a pitch.** Banned: rhetorical sales questions ("So what does that get you?"), self-hype ("here's why you'd want me on it"), and landing-page lines ("you'll never be surprised by what you owe," "skip the usual headaches"). Say what you'd do, plainly — if a sentence sounds like marketing copy, flatten it or cut it.
+- **Don't explain how the technology works — the client is buying an outcome, not a lecture.** State that you can do the thing; do NOT teach them the mechanics of it. Cut parentheticals and asides that describe *how* a tool/pattern works ("idempotent webhook handling, retries, reconciliation," "load balancing and auto-scaling to keep it scalable," "Terraform for reproducible infra," "a thin styling layer over React"). They already know what they asked for. Name the tech, claim the capability, move on — every clause should be about *what you'll deliver for them*, not a tutorial on the stack.
 - Trust signals only where they fit: US-based, same-day communication, and a **not-to-exceed hour cap** for price-sensitive clients.
 
 ## Open & close (fixed shape)
