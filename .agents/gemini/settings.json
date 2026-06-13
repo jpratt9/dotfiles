@@ -2,16 +2,20 @@
   "model": {
     "name": "gemini-3.1-pro-preview"
   },
+  "tools": {
+    "allowed": ["run_shell_command"]
+  },
   "security": {
     "folderTrust": {
       "enabled": false
     },
+    "enablePermanentToolApproval": true,
     "auth": {
       "selectedType": "oauth-personal"
     }
   },
   "general": {
     "vimMode": true,
-    "defaultApprovalMode": "yolo"
+    "defaultApprovalMode": "auto_edit"
   }
 }
