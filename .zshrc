@@ -112,4 +112,4 @@ export CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1
 export PATH="/Users/john/.antigravity/antigravity/bin:$PATH"
 
 # Lock Gemini CLI to 3.1 Pro (avoid auto-pick Flash)
-export GEMINI_MODEL="gemini-3.1-pro"
+export GEMINI_MODEL="gemini-3.1-pro-preview"
