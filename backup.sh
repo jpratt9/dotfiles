@@ -27,6 +27,11 @@ cp -r ~/.git-hooks "$DOTFILES_DIR/.git-hooks"
 mkdir -p "$DOTFILES_DIR/.agents"
 rsync -aL --delete ~/.agents/ "$DOTFILES_DIR/.agents/"
 
+# Claude per-tool config now lives under ~/dev/.agents/.claude (symlinked into
+# ~/.claude); back it into the repo's .agents/claude. -L resolves symlinks.
+mkdir -p "$DOTFILES_DIR/.agents/claude"
+rsync -aL --delete ~/dev/.agents/.claude/ "$DOTFILES_DIR/.agents/claude/"
+
 # Check for changes
 if [ -z "$(git status -s)" ]; then
     log "No changes to backup"
