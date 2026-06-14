@@ -13,8 +13,9 @@ log() {
 
 cd "$DOTFILES_DIR" || exit 1
 
-# Pull latest
-git pull --rebase
+# Pull latest. --autostash so a dirty working tree (e.g. this script editing
+# itself, or staged dotfile copies) doesn't abort the rebase.
+git pull --rebase --autostash
 
 # Copy dotfiles
 cp ~/.zshrc "$DOTFILES_DIR/.zshrc"
