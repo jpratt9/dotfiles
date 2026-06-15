@@ -22,7 +22,20 @@ JS_RUNTIME_FLAGS = [
 
 
 def fetch_transcript(url: str) -> dict:
-    """Fetch transcript and metadata for a YouTube video."""
+    """Fetch transcript and metadata for a YouTube video (or a local file)."""
+
+    # Local file: no YouTube metadata/subtitles — extract audio and Whisper it.
+    expanded = os.path.expanduser(url)
+    if os.path.exists(expanded):
+        title = os.path.splitext(os.path.basename(expanded))[0]
+        with tempfile.TemporaryDirectory() as tmpdir:
+            transcript = transcribe_with_groq(expanded, tmpdir, 0)
+        if transcript:
+            return {"title": title, "channel": "local file",
+                    "duration": "unknown", "transcript": transcript,
+                    "source": "groq-whisper"}
+        return {"title": title,
+                "error": "Local file transcription failed (check GROQ_API_KEY / ffmpeg)."}
 
     # Get video metadata first
     result = subprocess.run(
@@ -93,14 +106,23 @@ def transcribe_with_groq(url: str, tmpdir: str, duration: int) -> str | None:
     if not api_key:
         return None
 
-    # Download audio
+    # Download audio (local paths skip the YouTube-only yt-dlp flags)
     audio_path = os.path.join(tmpdir, "audio.mp3")
+    is_local = os.path.exists(url)
+    yt_flags = [] if is_local else JS_RUNTIME_FLAGS
     result = subprocess.run(
-        ["yt-dlp", *JS_RUNTIME_FLAGS, "-x", "--audio-format", "mp3", "-o", audio_path, url],
+        ["yt-dlp", *yt_flags, "-x", "--audio-format", "mp3", "-o", audio_path, url],
         capture_output=True, text=True, timeout=300
     )
     if result.returncode != 0 or not os.path.exists(audio_path):
-        return None
+        # Fall back to ffmpeg (handles local files yt-dlp can't demux).
+        if is_local:
+            subprocess.run(
+                ["ffmpeg", "-i", url, "-vn", "-acodec", "libmp3lame", "-q:a", "4", audio_path, "-y"],
+                capture_output=True, text=True, timeout=300
+            )
+        if not os.path.exists(audio_path):
+            return None
 
     # Check file size (Groq limit is 25MB)
     file_size = os.path.getsize(audio_path)

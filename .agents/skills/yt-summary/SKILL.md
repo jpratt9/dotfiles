@@ -1,11 +1,11 @@
 ---
 name: yt-summary
-description: Fetch and summarize a YouTube video transcript
-argument-hint: "<youtube-url>"
+description: Fetch and summarize a YouTube video (or local video/audio file) transcript
+argument-hint: "<youtube-url-or-file-path>"
 allowed-tools: Bash
 ---
 
-Summarize a YouTube video from its transcript.
+Summarize a YouTube video (or a local video/audio file) from its transcript.
 
 ## Steps
 
@@ -14,7 +14,7 @@ Summarize a YouTube video from its transcript.
    python3 ~/.claude/skills/yt-summary/scripts/fetch_transcript.py "$ARGUMENTS"
    ```
 
-2. If the script returns an error, tell the user what went wrong (e.g. no captions available).
+2. If the script returns an error, tell the user what went wrong (e.g. no captions available, or missing GROQ_API_KEY for local files).
 
 3. If the transcript was fetched successfully, provide a summary with this format:
 

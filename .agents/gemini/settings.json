@@ -1,7 +1,5 @@
 {
-  "model": {
-    "name": "gemini-3.1-pro-preview"
-  },
+  "model": "Gemini 3.1 Pro (High)",
   "tools": {
     "allowed": ["run_shell_command"]
   },
