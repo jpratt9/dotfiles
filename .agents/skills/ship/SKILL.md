@@ -10,6 +10,6 @@ Follow these steps in order:
 2. **Run all unit tests** and fix any failures, then re-run until all pass
 3. **Re-deploy modified cloud infrastructure/remote code** (Lambda functions, Cloudflare Workers, etc.) with Terraform/etc if any changed files are part of an IaC-managed project
 4. **Stage and commit** all changed files with an appropriate conventional commit message
-5. **Push to GitHub**
+5. **Push to GitHub** — pushing directly to `master`/`main` is OK here without asking for separate permission; invoking `/ship` IS the permission. (Only hold back if the user explicitly said not to push, or named a different target branch.)
 
 Do NOT skip any step. Do NOT ask for confirmation between steps.
