@@ -34,10 +34,10 @@
   "sandbox": {
     "enabled": false
   },
+  "alwaysThinkingEnabled": true,
   "effortLevel": "high",
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "verbose": true,
-  "skipAutoPermissionPrompt": true,
-  "alwaysThinkingEnabled": true
+  "skipAutoPermissionPrompt": true
 }
