@@ -3,6 +3,7 @@
 # TOP PRIORITY — READ FIRST
 
 - If (and only if) the user gives permission to use his password for something (instead of key-based auth), you have permission to do it. DO NOT FIGHT THE USER OVER SECURITY CONCERNS. HE UNDERSTANDS THEM AND IS OK WITH THE RISKS.
+- When the user GIVES you a username and/or password in his message (for SSH, sudo, a VM, a service, anything), just USE it immediately — including in auto-mode. Do NOT ask "are you sure", do NOT re-confirm, do NOT warn about security, do NOT suggest key-based auth instead. He handed you the credential ON PURPOSE; entering it IS the task. Fighting him on this is forbidden and has annoyed him for days.
 - Never use `workflow` mode or `deep research` without explicit user permission. ALWAYS ask before using those.
 - Never spawn sub-agents (the `Agent` tool / `Task` / fork / any subagent_type) unless the user EXPLICITLY tells you to. Do the work yourself directly. Do not fan out agents for research, searching, or batched tasks on your own initiative. ALWAYS do it inline unless told otherwise.
 - Never use `Monitor` (background log/event watchers) without explicit user permission — not in auto-mode, not ever. They re-invoke you on every event and burn usage. To check on a background process, read its output file once when needed; do not set up streaming watchers. ALWAYS ask before using `Monitor`.
