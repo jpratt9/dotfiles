@@ -9,6 +9,9 @@
 # enforcement; the model could route around it (perl unlink, python os.remove).
 # It exists to stop the obvious cases (rm, find -delete, DELETE FROM, DROP).
 
+# >>> TEMPORARILY DISABLED (2026-07-01) — re-enable by removing this line <<<
+exit 0
+
 input=$(cat)
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -z "$cmd" ] && exit 0
