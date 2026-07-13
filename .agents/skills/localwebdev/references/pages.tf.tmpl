@@ -1,0 +1,44 @@
+# Cloudflare Pages project for <SLUG> — managed as infra-as-code.
+# Terraform owns the PROJECT resource; `wrangler pages deploy public` uploads the files.
+# Fill in <SLUG> and set the account id below (or pass via TF_VAR_ / env).
+
+terraform {
+  required_providers {
+    cloudflare = {
+      source  = "cloudflare/cloudflare"
+      version = "~> 5.0"
+    }
+  }
+}
+
+variable "cloudflare_api_token" {
+  type        = string
+  description = "Cloudflare API token with Pages:Edit. Reads CLOUDFLARE_API_TOKEN env if unset."
+  default     = null
+  sensitive   = true
+}
+
+variable "account_id" {
+  type        = string
+  description = "Cloudflare account ID that owns the Pages project."
+  # John's account (Liliana's was deployed here):
+  default     = "551cbfe060cfcb87bf35d0d3fddc6ad6"
+}
+
+provider "cloudflare" {
+  api_token = var.cloudflare_api_token
+}
+
+resource "cloudflare_pages_project" "site" {
+  account_id        = var.account_id
+  name              = "<SLUG>"
+  production_branch = "main"
+
+  # Direct Upload project (files pushed by wrangler, not a connected Git build).
+  # Deployment configs are optional for a plain static site; left minimal on purpose.
+}
+
+output "pages_subdomain" {
+  value       = "${cloudflare_pages_project.site.name}.pages.dev"
+  description = "Live URL once wrangler has pushed the first deployment."
+}
