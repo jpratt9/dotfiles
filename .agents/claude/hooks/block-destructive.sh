@@ -9,10 +9,15 @@
 # enforcement; the model could route around it (perl unlink, python os.remove).
 # It exists to stop the obvious cases (rm, find -delete, DELETE FROM, DROP).
 
-# >>> TEMPORARILY DISABLED (2026-07-01) — re-enable by removing this line <<<
-exit 0
-
 input=$(cat)
+
+# /allowdelete bypass: when the guard has been switched off (via the /allowdelete
+# skill), allow everything. State lives in a file because env vars don't survive
+# across separate tool calls. File contains "off" => guard disabled.
+if [ "$(cat "/Users/john/.claude/hooks/.delguard" 2>/dev/null)" = "off" ]; then
+  exit 0
+fi
+
 cmd=$(printf '%s' "$input" | jq -r '.tool_input.command // empty')
 [ -z "$cmd" ] && exit 0
 
@@ -27,13 +32,26 @@ block() {
 }
 
 # --- file deletion ---
+# Match the delete commands only as STANDALONE tokens, not substrings, so words
+# like crm/charm/perform/confirm/warm/firmware don't false-positive. A token
+# counts when it's preceded by line-start or a shell separator (space ; | & ( `)
+# and followed by whitespace or line-end. Also matches an absolute path form
+# (/bin/rm, /usr/bin/rmdir). grep -E is used because bash `case` globs have no
+# word boundaries. `terraform` is stripped first (it contains "rm" but is safe).
+scan="${cmd//terraform/}"
+_word_del='(^|[[:space:];|&(`])(/[[:alnum:]/_.-]*/)?(rm|rmdir|unlink|shred|trash)([[:space:]]|$)'
+if printf '%s' "$scan" | grep -Eq "$_word_del"; then
+  # figure out which one for the message
+  for w in rm rmdir unlink shred trash; do
+    if printf '%s' "$scan" | grep -Eq "(^|[[:space:];|&(\`])(/[[:alnum:]/_.-]*/)?${w}([[:space:]]|\$)"; then
+      block "$w (file removal)"
+    fi
+  done
+  block "file removal"
+fi
+# find/rsync --delete flag (distinct from the rm-family word check above)
 case "$cmd" in
-  *"rm "*|*"rm -"*|*"/bin/rm"*)            block "rm (file removal)";;
-  *"unlink "*)                             block "unlink";;
-  *"rmdir "*)                              block "rmdir";;
   *"-delete"*)                             block "-delete (find/rsync file deletion)";;
-  *"shred "*)                              block "shred";;
-  *"trash "*)                              block "trash";;
 esac
 
 # git history / worktree destroyers
