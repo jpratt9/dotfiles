@@ -20,6 +20,7 @@ Spawn ONE agent (general-purpose) to extract the real brand + business facts. Do
 - **Business info**: address, phone, email, hours, booking link, social links.
 - **Copy/tagline** and any real **reviews** (with names) for social proof.
 - **Booking system** + the direct public booking URL.
+- **Google Maps place URL** for the business — needed for the default photo pull (§2a). Their reviews almost always come from Google Maps, so this is usually available; capture the listing/place URL if findable.
 
 The browser extension is often not connected — that's fine; the agent should pull from the site HTML, embedded bootstrap/config JSON, and the booking platform's JSON API instead.
 
@@ -32,7 +33,7 @@ public/index.html   public/styles.css   public/script.js   public/assets/<logos>
 ```
 Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they can charge more — elevate, don't just modernize. Concretely:
 - **Keep their real logo.** Build the palette + type up from their actual brand (don't invent a new identity), but refine it (muted/elevated versions of their colors, a distinctive display + body font pairing — never Inter/Arial/Roboto).
-- **Type-led, photo-light by default.** Do NOT invent or fake photos. If no real imagery is available, lean on typography, color, texture (CSS grain/gradient-mesh), and the real logo. If real photos ARE fetched (see §2a), build a proper gallery from them; otherwise leave a clearly-commented gallery section ready to drop in their Instagram shots later.
+- **Pull their real Google photos by default (§2a) and build a gallery from them.** Never invent or fake photos. Only when the photo pull yields nothing (no token, no Maps URL, or none returned) fall back to a type-led, photo-light layout — lean on typography, color, texture (CSS grain/gradient-mesh), and the real logo, leaving a clearly-commented gallery section ready for their Instagram shots.
 - **Use real content only**: real services (bilingual if they are), real hours, real reviews (lightly trimmed for length is fine), real contact info, real booking link. Frame "price varies" services as a bespoke/consultation menu — that supports the premium tier.
 - Single page, sections roughly: sticky nav + Book CTA → hero (bold statement, rating proof) → services menu → social proof/stats → real reviews → visit (hours/address/map/seal) → final CTA → footer. Booking buttons all point to their existing booking URL (no backend).
 - **First viewport must be COMPLETE — nothing clipped.** Everything that logically belongs on the opening screen (headline, subcopy, both primary CTAs, the rating/proof line, and any hero side-card like a signature-item/price panel) must be fully visible within the initial viewport on BOTH desktop and mobile — never bleeding past the bottom edge (the #1 recurring failure: the star rating / proof line half-cut at the fold). To guarantee it:
@@ -44,8 +45,8 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
 
-## 2a. Optional: Google Business Profile photos (opt-in)
-Only when John opts in — he asks to "use GBP photos" / "pull their Google photos" and provides a **Google Maps place URL**. This is off by default (it costs money and pulls third-party imagery).
+## 2a. Google Business Profile photos (ON by default)
+Pull the business's real Google photos **by default** on every run — do it whenever a **Google Maps place URL** is available (from §1) and the Apify token is set. Skip only if John explicitly says to leave photos out, there's no usable Maps URL, or the token isn't set. Cost is pennies per business (see below), so default to doing it.
 
 Needs John's Apify token. It lives in his macOS Keychain via envchain (namespace `apify`, var `APIFY_TOKEN`) — run the script under `envchain apify` and the token is injected; never pass it on the command line. If `envchain --list` doesn't show `apify`, tell him to run `envchain --set apify APIFY_TOKEN` and skip this step for now — do NOT block the build on it.
 
