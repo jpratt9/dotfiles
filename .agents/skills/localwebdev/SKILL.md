@@ -1,11 +1,11 @@
 ---
 name: localwebdev
-description: Take an existing local business (a URL + pasted text/Google reviews) and spin up a sleek 2026 semi-premium "revamp" static site for it, then deploy it to a brand-new Cloudflare Pages project with wrangler Direct Upload, tracked in Terraform. Use when John says /localwebdev or wants to build+deploy a client demo site from a business URL.
+description: Take an existing local business (a URL + pasted text/Google reviews) and spin up a sleek 2026 semi-premium "revamp" static site for it, then deploy it to a brand-new Cloudflare Pages project with wrangler Direct Upload. Use when John says /localwebdev or wants to build+deploy a client demo site from a business URL.
 argument-hint: "<business-url> — <notes, google reviews, or existing site copy>"
 allowed-tools: Agent, Bash, Write, Edit, Read, WebFetch
 ---
 
-Build a static "revamp site" for the business in `$ARGUMENTS` and deploy it to its own Cloudflare Pages project. This is John's client-demo pipeline — the goal is a live `<slug>.pages.dev` URL he can flip open on an iPad and use to close the client / justify higher rates.
+Build a static "revamp site" for the business in `$ARGUMENTS` and deploy it to its own Cloudflare Pages project. This is John's client-demo pipeline — the goal is a live `<slug>.pages.dev` URL he can flip open on an iPad and use to close the client / justify higher rates. After deploy, record the business in John's CRM (§6).
 
 `$ARGUMENTS` = a business URL followed by free-text context (Google reviews, existing site copy, notes). Parse the URL out; treat the rest as source material. If no URL is given, ask for one before proceeding.
 
@@ -70,34 +70,49 @@ In `~/dev/<slug>/` write `package.json`:
   "name": "<slug>-site",
   "version": "1.0.0",
   "private": true,
-  "scripts": { "deploy": "wrangler pages deploy public --project-name=<slug> --branch=main --commit-dirty=true" },
+  "scripts": { "deploy": "./deploy.sh" },
   "devDependencies": { "wrangler": "^4" }
 }
 ```
-Then `npm install`. Only `public/` ships — `package.json`, `node_modules`, `README.md` never deploy. (Note: Cloudflare Pages serves `index.html` with a 200 for any unmatched path, so probing `/README.md` returns the homepage, not a leak — don't be alarmed by that.)
-
-Write a short `README.md` (what it is, `npm run deploy`, the live URL, TODOs like optimize logo / self-host fonts / add Instagram gallery).
-
-## 4. Terraform: declare the Pages project as infra
-Create `~/dev/<slug>/terraform/` with `main.tf` from the template at `references/pages.tf.tmpl` in this skill — substitute the slug and production branch. This codifies the Cloudflare Pages **project** as IaC. Then:
+Then generate the deploy script with the bundled generator — it writes an executable `deploy.sh` (wrangler Direct Upload, `PROJECT` set to the slug) into the project root:
 ```
-cd ~/dev/<slug>/terraform && terraform init && terraform apply -auto-approve
+python3 <skill-dir>/scripts/write_deploy_sh.py --project <slug> --name "<business name>" --dir ~/dev/<slug>
 ```
-Terraform creates/owns the project resource; **wrangler uploads the actual files** (Terraform's Pages resource does not push assets). If `terraform apply` reports the project already exists, `terraform import cloudflare_pages_project.site <account_id>/<slug>` then re-apply — do not delete anything. Needs `CLOUDFLARE_API_TOKEN` (or the account/token in the tf vars); if Terraform errors on auth, resolve it, don't hand it back to John.
+Then `npm install`. Deploy/redeploy is now one command — `./deploy.sh` (or `npm run deploy`); the client gets a self-contained project with no cloud console or IaC needed. Only `public/` ships — `package.json`, `node_modules`, `README.md`, `deploy.sh` never deploy. (Note: Cloudflare Pages serves `index.html` with a 200 for any unmatched path, so probing `/README.md` returns the homepage, not a leak — don't be alarmed by that.)
 
-If John explicitly says "skip terraform" / "just wrangler", skip §4 and create the project with `wrangler pages project create <slug> --production-branch=main` instead.
+Write a short `README.md` (what it is, `./deploy.sh` to (re)deploy, the live URL, TODOs like optimize logo / self-host fonts / add Instagram gallery).
 
-## 5. Deploy + verify
+## 4. Deploy + verify
+Static site → no Terraform / IaC. Create the Pages project once (idempotent — if it reports "already exists", carry on):
 ```
-cd ~/dev/<slug> && npm run deploy
+wrangler pages project create <slug> --production-branch=main
 ```
-Direct Upload bypasses the 500-builds/month limit. wrangler must be authed (`wrangler whoami`); if the token lacks `pages:write`, run `wrangler login` (opens John's browser — he clicks Allow). Then verify against the LIVE url with curl:
+wrangler must be authed (`wrangler whoami`); if the token lacks `pages:write`, run `wrangler login` (opens John's browser — he clicks Allow). Then deploy — and for every future redeploy, this same one command:
+```
+cd ~/dev/<slug> && ./deploy.sh
+```
+Direct Upload bypasses the 500-builds/month limit. Verify against the LIVE url with curl:
 - `/` returns 200 and the real `<title>`,
 - `/assets/<logo>` returns 200 `content-type: image/png`,
 - `/styles.css` returns 200.
 
-## 6. Hand off
-Give John the bare live URL on its own line (`https://<slug>.pages.dev`) — he asks for the link a lot, make it copy-pasteable. Then a tight recap: what shipped, `npm run deploy` to update, and offer the two upsells (Instagram photo gallery; custom subdomain like `<slug>.yourstudio.dev`).
+## 5. Hand off
+Give John the bare live URL on its own line (`https://<slug>.pages.dev`) — he asks for the link a lot, make it copy-pasteable. Then a tight recap: what shipped, `./deploy.sh` to update, and offer the two upsells (Instagram photo gallery; custom subdomain like `<slug>.yourstudio.dev`).
+
+## 6. Record the client in the CRM
+After the site is deployed and verified, add this business to the "Web Clients"
+tab of John's CRM by shelling out to the CRM repo's stable CLI (it owns all the
+DB/schema — don't touch the database directly, and don't import its Python):
+```
+python3 /Users/john/dev/contract_outreach/add_web_client.py \
+  --company "<business name>" \
+  --gbp "<google maps place url from §1>" \
+  --phone "<business phone from §1>" \
+  --site-url "https://<slug>.pages.dev"
+```
+Only `--company` is required; pass the others when known. This is best-effort —
+if it exits non-zero (e.g. exit 3 = CRM/DB unavailable), mention it in the
+handoff but do NOT treat it as a build failure; the site is already live.
 
 ## Guardrails
 - Real data only. No fabricated prices, phone numbers, addresses, or fake photos/testimonials.
