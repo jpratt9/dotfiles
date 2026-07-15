@@ -24,6 +24,9 @@
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "high",
+  "env": {
+    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+  },
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "verbose": true,

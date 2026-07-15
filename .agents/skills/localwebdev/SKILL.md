@@ -33,8 +33,10 @@ public/index.html   public/styles.css   public/script.js   public/assets/<logos>
 ```
 Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they can charge more — elevate, don't just modernize. Concretely:
 - **Keep their real logo.** Build the palette + type up from their actual brand (don't invent a new identity), but refine it (muted/elevated versions of their colors, a distinctive display + body font pairing — never Inter/Arial/Roboto).
+- **Fit the type + palette to the business's *category*, not a house default.** The #1 "AI-slop" tell is the same generic look on every site. A concrete/construction co. wants an industrial condensed face (e.g. Bebas Neue / Barlow Condensed) + muted greys; a salon a refined serif; a taquería something warm and hand-drawn. Vary it per trade — a landscaper and a hair salon must not come out looking like siblings.
 - **Pull their real Google photos by default (§2a) and build a gallery from them.** Never invent or fake photos. Only when the photo pull yields nothing (no token, no Maps URL, or none returned) fall back to a type-led, photo-light layout — lean on typography, color, texture (CSS grain/gradient-mesh), and the real logo, leaving a clearly-commented gallery section ready for their Instagram shots.
 - **Use real content only**: real services (bilingual if they are), real hours, real reviews (lightly trimmed for length is fine), real contact info, real booking link. Frame "price varies" services as a bespoke/consultation menu — that supports the premium tier.
+- **Real SEO in `<head>`** (reads as a pro build, helps them rank): accurate `<title>` + meta description, Open Graph + Twitter-card tags, and a JSON-LD `LocalBusiness` schema (name, telephone, email, `areaServed`, `founder`, and a `hasOfferCatalog` of their services) — all populated from the §1 data.
 - Single page, sections roughly: sticky nav + Book CTA → hero (bold statement, rating proof) → services menu → social proof/stats → real reviews → visit (hours/address/map/seal) → final CTA → footer. Booking buttons all point to their existing booking URL (no backend).
 - **First viewport must be COMPLETE — nothing clipped.** Everything that logically belongs on the opening screen (headline, subcopy, both primary CTAs, the rating/proof line, and any hero side-card like a signature-item/price panel) must be fully visible within the initial viewport on BOTH desktop and mobile — never bleeding past the bottom edge (the #1 recurring failure: the star rating / proof line half-cut at the fold). To guarantee it:
   - Size the hero to the real viewport: `min-height: 100svh` and account for the sticky nav (e.g. `min-height: calc(100svh - var(--nav-h))`). Use `svh`/`dvh`, **never `vh`** — `vh` ignores mobile browser chrome and causes exactly this overflow.
@@ -96,6 +98,15 @@ Direct Upload bypasses the 500-builds/month limit. Verify against the LIVE url w
 - `/assets/<logo>` returns 200 `content-type: image/png`,
 - `/styles.css` returns 200.
 
+Then back up the project to a **private** GitHub repo (repo name = `<slug>`):
+```
+cd ~/dev/<slug>
+printf 'node_modules/\n.wrangler/\n.DS_Store\n' > .gitignore
+git init -q -b main && git add -A && git commit -q -m "[feat] <slug> site"
+gh repo create <slug> --private --source=. --remote=origin --push
+```
+Must be `--private`. `gh` must be authed (`gh auth status`; if not, `gh auth login`). If the repo name is taken, use `<slug>-site`. For a redeploy of an existing project, the repo already exists — just `git add -A && git commit && git push`.
+
 ## 5. Hand off
 Give John the bare live URL on its own line (`https://<slug>.pages.dev`) — he asks for the link a lot, make it copy-pasteable. Then a tight recap: what shipped, `./deploy.sh` to update, and offer the two upsells (Instagram photo gallery; custom subdomain like `<slug>.yourstudio.dev`).
 
@@ -118,4 +129,4 @@ handoff but do NOT treat it as a build failure; the site is already live.
 - Real data only. No fabricated prices, phone numbers, addresses, or fake photos/testimonials.
 - Keep the client's real logo; don't rebrand them.
 - Don't stand up a local http server; John opens the file directly.
-- Don't `git` commit/push or delete infra unless told.
+- The only `git` push is the §4 private-repo backup; don't commit/push anywhere else or delete infra.
