@@ -124,3 +124,15 @@ autoload -Uz compinit && compinit -C
 
 # Added by Antigravity CLI installer
 export PATH="/Users/john/.local/bin:$PATH"
+
+# localwebdev <name>: scaffold ~/dev/<name>, make a private GitHub repo, launch Claude
+localwebdev() {
+    if [ -z "$1" ]; then
+        echo "Error: project/repo name required"
+        return 1
+    fi
+    mkdir -p ~/dev/"$1" && cd ~/dev/"$1" || return 1
+    git init -q -b main
+    gh repo create "$1" --private --source=. --remote=origin || return 1
+    claude
+}

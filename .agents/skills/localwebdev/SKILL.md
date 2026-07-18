@@ -41,6 +41,7 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
 - **First viewport must be COMPLETE — nothing clipped.** Everything that logically belongs on the opening screen (headline, subcopy, both primary CTAs, the rating/proof line, and any hero side-card like a signature-item/price panel) must be fully visible within the initial viewport on BOTH desktop and mobile — never bleeding past the bottom edge (the #1 recurring failure: the star rating / proof line half-cut at the fold). To guarantee it:
   - Size the hero to the real viewport: `min-height: 100svh` and account for the sticky nav (e.g. `min-height: calc(100svh - var(--nav-h))`). Use `svh`/`dvh`, **never `vh`** — `vh` ignores mobile browser chrome and causes exactly this overflow.
   - Make the hero a flex column that fits its box (`justify-content: center`, controlled `gap`), and cap the display font + vertical rhythm with `clamp()` whose **max is tuned so the CTA row and proof line still clear the fold** — headlines shrink on short/mobile viewports rather than pushing content off-screen.
+  - **Scale hero type + spacing to the CONTAINER with `cqi`, not only the viewport** — this is what guarantees nothing clips on mobile. Put `container-type: inline-size` on the `.hero` (or a wrapper), then size the headline, subcopy, gaps and padding in container-inline units, e.g. `font-size: clamp(1.75rem, 9cqi, 5rem)`. Since `cqi` = 1% of the hero's own width, the headline scales down proportionally on a narrow phone (can't overflow horizontally, and its smaller height helps the block clear the fold), while the `clamp()` max still caps it on desktop. Note: an element can't query its own container — set `container-type` on the ancestor and size the children in `cqi`. Pair this with the `svh`/`dvh` sizing above (cqi handles width-proportional fit, svh/dvh handles vertical fit).
   - On mobile, if a hero side-card can't fit alongside everything, let it reflow below and shrink the headline so the core (headline + CTA + proof) still fits one screen; heavy secondary content may move just below the fold, but the primary CTA and proof never do.
   - **Verify before shipping:** check the rendered hero at 1440×900 (desktop) and 390×844 (mobile) and confirm the proof line and both CTAs are on-screen with no clipping; tighten the `clamp()` maxes/gaps until they are. Same discipline for any other section meant to read as a single screen.
 - Responsive, reduced-motion safe, scroll-reveal, mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
@@ -124,6 +125,13 @@ python3 /Users/john/dev/contract_outreach/add_web_client.py \
 Only `--company` is required; pass the others when known. This is best-effort —
 if it exits non-zero (e.g. exit 3 = CRM/DB unavailable), mention it in the
 handoff but do NOT treat it as a build failure; the site is already live.
+
+## 7. Telegram the live link to John's phone (always, last step)
+Deterministic final step — run it on **every** successful build so John instantly gets the live URL on his phone to test in mobile Chrome. The bot token + chat id live in Keychain via envchain (namespace `telegram`: `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`) — **never hardcode them; this skill is in a public repo.** Run:
+```
+envchain telegram python3 <skill-dir>/scripts/notify_telegram.py --url "https://<slug>.pages.dev" --name "<business name>"
+```
+Stdlib-only; POSTs the live URL to John's Telegram. Exit 2 = creds not injected (tell John to set them: `envchain --set telegram TELEGRAM_BOT_TOKEN` and `envchain --set telegram TELEGRAM_CHAT_ID`); exit 1 = send failed. Either way mention it in the handoff — don't treat as a build failure; the site is already live.
 
 ## Guardrails
 - Real data only. No fabricated prices, phone numbers, addresses, or fake photos/testimonials.
