@@ -21,6 +21,8 @@ def detect_platform(url: str) -> str:
 
 
 def download_video(url: str) -> dict:
+    platform = detect_platform(url)
+
     # Get metadata first
     result = subprocess.run(
         ["yt-dlp", "--dump-json", "--no-download", url],
@@ -31,12 +33,25 @@ def download_video(url: str) -> dict:
 
     info = json.loads(result.stdout)
     title = info.get("title", "Unknown")
+
+    # Instagram's title is a generic "Video by <user>"; the real caption lives in
+    # the "description" field. Use it (collapsed to a single line) as the title so
+    # the clip is named after what it's actually about.
+    if platform == "Instagram":
+        caption = " ".join((info.get("description") or "").split())
+        if caption:
+            title = caption
+
     duration = info.get("duration", 0)
     duration_str = f"{duration // 60}m {duration % 60}s" if duration else "unknown"
-    platform = detect_platform(url)
 
-    # Sanitize title for filename
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title).strip()
+    # Sanitize title for filename. Cap the length — IG captions can run hundreds of
+    # chars and would otherwise blow past the filesystem's 255-byte name limit — and
+    # collapse the underscore runs that emoji/hashtags/punctuation leave behind.
+    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)
+    while "__" in safe_title:
+        safe_title = safe_title.replace("__", "_")
+    safe_title = safe_title[:100].strip(" -_")
     if not safe_title:
         safe_title = "video"
 
