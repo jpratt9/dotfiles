@@ -104,5 +104,48 @@ class TestDownloadVideo(unittest.TestCase):
         self.assertNotIn(":", result["file"])
 
 
+class TestPosterInFilename(unittest.TestCase):
+    """The account that posted the video is appended to the filename."""
+
+    def _run(self, meta):
+        with patch("download_video.subprocess.run") as mock_run, \
+             patch("download_video.os.path.exists", return_value=True):
+            mock_run.side_effect = [
+                MagicMock(returncode=0, stdout=json.dumps(meta)),
+                MagicMock(returncode=0),
+            ]
+            return download_video("https://youtu.be/x")
+
+    def test_uploader_is_appended(self):
+        result = self._run({"title": "Some Talk", "duration": 10,
+                            "uploader": "SynQ with Saad"})
+        self.assertTrue(result["file"].endswith("Some Talk - SynQ with Saad.mp4"))
+
+    def test_channel_used_when_uploader_absent(self):
+        result = self._run({"title": "Clip", "duration": 5, "channel": "Chan Name"})
+        self.assertTrue(result["file"].endswith("Clip - Chan Name.mp4"))
+
+    def test_no_suffix_when_poster_unknown(self):
+        result = self._run({"title": "Anon Clip", "duration": 5})
+        self.assertTrue(result["file"].endswith("Anon Clip.mp4"))
+        self.assertNotIn(" - .mp4", result["file"])
+
+    def test_poster_is_sanitized(self):
+        result = self._run({"title": "Vid", "duration": 5,
+                            "uploader": "Bad/Name: <chars>"})
+        for ch in "/:<>":
+            self.assertNotIn(ch, os.path.basename(result["file"]))
+
+    def test_blank_poster_adds_no_separator(self):
+        # A name of only punctuation sanitizes down to nothing.
+        result = self._run({"title": "Vid", "duration": 5, "uploader": "!!!"})
+        self.assertTrue(result["file"].endswith("Vid.mp4"))
+
+    def test_filename_stays_within_the_byte_limit(self):
+        result = self._run({"title": "T" * 300, "duration": 5,
+                            "uploader": "U" * 300})
+        self.assertLessEqual(len(os.path.basename(result["file"]).encode()), 255)
+
+
 if __name__ == "__main__":
     unittest.main()

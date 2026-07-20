@@ -20,6 +20,15 @@ def detect_platform(url: str) -> str:
     return "Unknown"
 
 
+def sanitize(text: str, limit: int) -> str:
+    """Make text safe for a filename: strip odd chars, collapse underscore runs,
+    and cap the length so the full name stays inside the 255-byte limit."""
+    safe = "".join(c if c.isalnum() or c in " -_" else "_" for c in text)
+    while "__" in safe:
+        safe = safe.replace("__", "_")
+    return safe[:limit].strip(" -_")
+
+
 def download_video(url: str) -> dict:
     platform = detect_platform(url)
 
@@ -48,18 +57,24 @@ def download_video(url: str) -> dict:
     # Sanitize title for filename. Cap the length — IG captions can run hundreds of
     # chars and would otherwise blow past the filesystem's 255-byte name limit — and
     # collapse the underscore runs that emoji/hashtags/punctuation leave behind.
-    safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in title)
-    while "__" in safe_title:
-        safe_title = safe_title.replace("__", "_")
-    safe_title = safe_title[:100].strip(" -_")
+    safe_title = sanitize(title, 100)
     if not safe_title:
         safe_title = "video"
+
+    # Who posted it. yt-dlp has no field literally named "poster"; on YouTube the
+    # channel comes back as uploader/channel, and other extractors vary, so fall
+    # through the aliases. Appended to the filename so clips from the same account
+    # group together. Skipped entirely when the extractor gives us nothing.
+    poster = (info.get("uploader") or info.get("channel")
+              or info.get("creator") or info.get("artist") or "")
+    safe_poster = sanitize(poster, 60)
+    stem = f"{safe_title} - {safe_poster}" if safe_poster else safe_title
 
     download_dir = os.path.expanduser("~/Downloads")
     # Use .mp4 directly since --merge-output-format mp4 forces the container.
     # Passing the source ext (e.g. .webm) here causes yt-dlp to write Title.webm.mp4
     # because the template's literal extension stays and the merge tacks on .mp4.
-    output_path = os.path.join(download_dir, f"{safe_title}.mp4")
+    output_path = os.path.join(download_dir, f"{stem}.mp4")
 
     # Download best quality
     result = subprocess.run(
@@ -74,7 +89,7 @@ def download_video(url: str) -> dict:
     # Defensive fallback: if .mp4 isn't where we expected, find what yt-dlp actually wrote.
     if not os.path.exists(output_path):
         candidates = [f for f in os.listdir(download_dir)
-                      if f.startswith(safe_title) and not f.endswith(".json")]
+                      if f.startswith(stem) and not f.endswith(".json")]
         if candidates:
             output_path = os.path.join(download_dir, candidates[0])
         else:
