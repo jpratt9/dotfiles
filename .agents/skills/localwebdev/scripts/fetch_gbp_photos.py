@@ -5,10 +5,14 @@ localwebdev build can drop them into a gallery.
 
 Runs the actor synchronously (run-sync-get-dataset-items), normalizes each Google
 image URL to a web-friendly resolution, downloads up to --max images into --out,
-and writes a `gallery.json` manifest (filename, category, owner flag, source URL)
-that the site build reads to render the gallery.
+and converts each to width-capped WebP variants — a large one for desktop plus a
+small one for phones — so the gallery never ships oversized full-res photos (the
+#1 mobile-PageSpeed killer). Writes a `gallery.json` manifest (file, width, height,
+file_sm, width_sm, category, owner, source, place) that the site build reads to
+wire each photo into a responsive <picture>/srcset.
 
-Stdlib only — no pip install needed at runtime.
+Stdlib for the fetch itself; the WebP conversion uses Pillow (`pip install
+Pillow`) and falls back to keeping the JPEGs if Pillow isn't installed.
 
 Usage:
   APIFY_TOKEN=... python3 fetch_gbp_photos.py \
@@ -27,6 +31,13 @@ import sys
 import time
 import urllib.request
 import urllib.error
+
+try:
+    from PIL import Image, ImageOps
+    _LANCZOS = getattr(Image, "Resampling", Image).LANCZOS  # Pillow >=9.1 vs older
+except ImportError:
+    Image = None
+    _LANCZOS = None
 
 ACTOR = "solidcode~google-maps-photos-scraper"
 RUN_SYNC = (
@@ -113,6 +124,24 @@ def download(url, dest, timeout=60):
             f.write(resp.read())
 
 
+def to_webp(src, dst, max_width=0, quality=80):
+    """Convert a downloaded JPEG to WebP with Pillow, capping the width at max_width
+    (0 = keep the source size). Only downscales, never upscales; honors EXIF
+    orientation so nothing ends up sideways. Returns the output (width, height) on
+    success, or None on failure so the caller can fall back to the JPEG."""
+    try:
+        with Image.open(src) as img:
+            img = ImageOps.exif_transpose(img).convert("RGB")
+            if max_width and img.width > max_width:
+                height = round(img.height * max_width / img.width)
+                img = img.resize((max_width, height), _LANCZOS)
+            img.save(dst, "WEBP", quality=quality, method=6)
+            return img.size
+    except (OSError, ValueError) as e:
+        log(f"  WebP convert failed: {e}")
+        return None
+
+
 def main():
     ap = argparse.ArgumentParser(description="Fetch GBP/Google Maps photos via Apify.")
     ap.add_argument("--url", required=True, help="Google Maps place URL")
@@ -122,6 +151,15 @@ def main():
                     help="Google size directive (e.g. s1600, s2048, s0=original)")
     ap.add_argument("--owner-only", action="store_true",
                     help="keep only owner-posted photos when the actor labels them")
+    ap.add_argument("--max-width", type=int, default=1200,
+                    help="cap the large WebP width in px (0 = keep source size; never upscales)")
+    ap.add_argument("--sm-width", type=int, default=640,
+                    help="width of the small responsive variant in px (0 = skip it)")
+    ap.add_argument("--webp-quality", type=int, default=80,
+                    help="WebP quality 0-100 (default 80)")
+    ap.add_argument("--no-webp", dest="webp", action="store_false",
+                    help="skip WebP conversion; keep the downloaded JPEGs as-is")
+    ap.set_defaults(webp=True)
     ap.add_argument("--token", default=os.environ.get("APIFY_TOKEN"),
                     help="Apify API token (defaults to $APIFY_TOKEN)")
     args = ap.parse_args()
@@ -149,24 +187,46 @@ def main():
         sys.exit(2)
 
     os.makedirs(args.out, exist_ok=True)
+    webp_ok = args.webp and Image is not None
+    if args.webp and not webp_ok:
+        log("Pillow not installed (`pip install Pillow`) — shipping JPEGs without WebP conversion.")
+
     manifest, n = [], 0
     for p in photos:
         if n >= args.max:
             break
         src = normalize_size(p["url"], args.size)
-        fname = f"photo-{n + 1:02d}.jpg"
+        idx = n + 1
+        jpg = os.path.join(args.out, f"photo-{idx:02d}.jpg")
         try:
-            download(src, os.path.join(args.out, fname))
+            download(src, jpg)
         except Exception as e:  # skip a bad image, keep going
-            log(f"  skip {fname}: {e}")
+            log(f"  skip photo-{idx:02d}: {e}")
             continue
-        manifest.append({
-            "file": fname,
-            "category": p["category"],
-            "owner": p["owner"],
-            "source": src,
-            "place": p["place"],
-        })
+        # Convert to width-capped WebP so the repo is never seeded with oversized
+        # full-res JPEGs (the #1 mobile-PageSpeed killer): a large variant for
+        # desktop and, when the photo is big enough, a small one for phones — the
+        # gallery wires the pair into a responsive srcset. Fall back to the JPEG if
+        # Pillow is absent or a convert fails.
+        entry = {"file": f"photo-{idx:02d}.jpg", "width": None, "height": None,
+                 "file_sm": None, "width_sm": None,
+                 "category": p["category"], "owner": p["owner"],
+                 "source": src, "place": p["place"]}
+        if webp_ok:
+            large = os.path.join(args.out, f"photo-{idx:02d}.webp")
+            dims = to_webp(jpg, large, args.max_width, args.webp_quality)
+            if dims:
+                entry["file"] = f"photo-{idx:02d}.webp"
+                entry["width"], entry["height"] = dims
+                if args.sm_width and dims[0] > args.sm_width:
+                    small = os.path.join(args.out, f"photo-{idx:02d}-sm.webp")
+                    sm = to_webp(jpg, small, args.sm_width, args.webp_quality)
+                    if sm:
+                        entry["file_sm"], entry["width_sm"] = f"photo-{idx:02d}-sm.webp", sm[0]
+                os.remove(jpg)
+            else:
+                log(f"  WebP convert failed for photo-{idx:02d}; keeping JPEG")
+        manifest.append(entry)
         n += 1
 
     if not manifest:

@@ -25,6 +25,15 @@ if [ ! -x "node_modules/.bin/wrangler" ]; then
   npm install
 fi
 
+# Cloudflare Pages serves _headers from the deploy dir. Rewrite it fresh on every
+# deploy so the edge always revalidates and never serves a stale/cached copy --
+# this is what stops PageSpeed Insights (and browsers) from testing an old version.
+mkdir -p public
+cat > public/_headers <<'HEADERS'
+/*
+  Cache-Control: public, max-age=0, must-revalidate
+HEADERS
+
 echo "→ deploying ./public to ${{PROJECT}}.pages.dev ..."
 node_modules/.bin/wrangler pages deploy public \\
   --project-name="${{PROJECT}}" \\

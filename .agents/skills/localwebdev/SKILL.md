@@ -53,16 +53,16 @@ Pull the business's real Google photos **by default** on every run — do it whe
 
 Needs John's Apify token. It lives in his macOS Keychain via envchain (namespace `apify`, var `APIFY_TOKEN`) — run the script under `envchain apify` and the token is injected; never pass it on the command line. If `envchain --list` doesn't show `apify`, tell him to run `envchain --set apify APIFY_TOKEN` and skip this step for now — do NOT block the build on it.
 
-Run the bundled script (stdlib only, no pip install):
+Run the bundled script (stdlib + Pillow for the WebP conversion — `pip install Pillow`):
 ```
 envchain apify python3 <skill-dir>/scripts/fetch_gbp_photos.py \
   --url "<google maps place url>" \
   --out ~/dev/<slug>/public/assets/gallery \
   --max 12 --size s1600
 ```
-It runs the Apify actor `solidcode~google-maps-photos-scraper` synchronously (run-sync-get-dataset-items), downloads up to `--max` images at web resolution into `public/assets/gallery/`, and writes `gallery.json` (file, category, owner, source, place). Cost is ~$0.50/1,000 images (a dozen photos is pennies). It exits non-zero if the token is missing (3) or the actor returns nothing (2/4) — handle gracefully and fall back to the photo-light layout.
+It runs the Apify actor `solidcode~google-maps-photos-scraper` synchronously (run-sync-get-dataset-items), downloads up to `--max` images, and **converts each to width-capped WebP variants with Pillow** — a large one (`--max-width`, default 1200px) plus a small phone-sized one (`--sm-width`, default 640px) — so the repo is never seeded with the oversized full-res JPEGs that tank mobile PageSpeed. It writes them into `public/assets/gallery/` as `photo-NN.webp` / `photo-NN-sm.webp` and emits `gallery.json` (file, width, height, file_sm, width_sm, category, owner, source, place). Needs Pillow (`pip install Pillow`); if it's missing it logs a warning and keeps the JPEGs (`--webp-quality` to tune, `--no-webp` to skip conversion, `--sm-width 0` to skip the small variant). Cost is ~$0.50/1,000 images (a dozen photos is pennies). It exits non-zero if the token is missing (3) or the actor returns nothing (2/4) — handle gracefully and fall back to the photo-light layout.
 
-Then build the gallery **from `gallery.json`** — render a responsive image grid in `index.html`, `loading="lazy"`, sized/cropped tastefully to match the design. Only render the gallery section if photos were actually downloaded. Pick the flattering, on-brand shots.
+Then build the gallery **from `gallery.json`** — a responsive image grid in `index.html`. Wrap each photo in a `<picture>` whose `<source type="image/webp">` lists both variants as a `srcset` with width descriptors — `gallery/<file_sm> <width_sm>w, gallery/<file> <width>w` — plus a `sizes` attribute that matches how wide the image actually renders in your grid at each breakpoint, so phones fetch the small file and desktops the large one. Set the `<img>`'s `width`/`height` from the manifest's `width`/`height` (kills layout shift → CLS 0) and `loading="lazy"` on gallery shots. If an entry has no `file_sm` (photo was already small) or no `width` (Pillow absent → JPEG fallback), just use the single `file`. If you place a GBP photo **above the fold** (e.g. a hero), don't lazy-load it — `fetchpriority="high"` it and add a responsive preload (`<link rel="preload" as="image" imagesrcset="…" imagesizes="…">`) so it doesn't gate LCP. Only render the gallery if photos were downloaded; pick the flattering, on-brand shots.
 
 Note: these are public Google Maps photos — a mix of owner- and customer-posted (this actor doesn't reliably label which, so `--owner-only` is a no-op; skip it). That's fine for the client's own site. Just curate: use the good ones.
 
