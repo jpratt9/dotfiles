@@ -5,6 +5,31 @@ import json
 import os
 import subprocess
 import sys
+import time
+
+# YouTube throws transient 403s under load. Back off these many seconds between
+# retries -- four attempts total (initial + one per backoff) -- then give up.
+BACKOFFS_403 = (3, 6, 9)
+
+
+def _is_403(stderr: str) -> bool:
+    low = (stderr or "").lower()
+    return "403" in low or "forbidden" in low
+
+
+def run_ytdlp(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
+    """Run a yt-dlp command, retrying a transient 403 with a 3/6/9-second backoff
+    before giving up. Any non-403 failure returns immediately -- no point waiting
+    on a bad URL or an unsupported site."""
+    result = None
+    for attempt, backoff in enumerate((*BACKOFFS_403, None), start=1):
+        result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
+        if result.returncode == 0 or backoff is None or not _is_403(result.stderr):
+            return result
+        print(f"[grab] got a 403; backing off {backoff}s and retrying "
+              f"(attempt {attempt}/{len(BACKOFFS_403) + 1})…", file=sys.stderr)
+        time.sleep(backoff)
+    return result
 
 
 def detect_platform(url: str) -> str:
@@ -33,9 +58,8 @@ def download_video(url: str) -> dict:
     platform = detect_platform(url)
 
     # Get metadata first
-    result = subprocess.run(
-        ["yt-dlp", "--dump-json", "--no-download", url],
-        capture_output=True, text=True, timeout=60
+    result = run_ytdlp(
+        ["yt-dlp", "--dump-json", "--no-download", url], timeout=60
     )
     if result.returncode != 0:
         return {"error": f"Failed to fetch video info: {result.stderr.strip()}"}
@@ -77,10 +101,9 @@ def download_video(url: str) -> dict:
     output_path = os.path.join(download_dir, f"{stem}.mp4")
 
     # Download best quality
-    result = subprocess.run(
+    result = run_ytdlp(
         ["yt-dlp", "-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4",
-         "-o", output_path, url],
-        capture_output=True, text=True, timeout=600
+         "-o", output_path, url], timeout=600
     )
 
     if result.returncode != 0:
