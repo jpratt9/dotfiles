@@ -44,7 +44,7 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
   - **Scale hero type + spacing to the CONTAINER with `cqi`, not only the viewport** — this is what guarantees nothing clips on mobile. Put `container-type: inline-size` on the `.hero` (or a wrapper), then size the headline, subcopy, gaps and padding in container-inline units, e.g. `font-size: clamp(1.75rem, 9cqi, 5rem)`. Since `cqi` = 1% of the hero's own width, the headline scales down proportionally on a narrow phone (can't overflow horizontally, and its smaller height helps the block clear the fold), while the `clamp()` max still caps it on desktop. Note: an element can't query its own container — set `container-type` on the ancestor and size the children in `cqi`. Pair this with the `svh`/`dvh` sizing above (cqi handles width-proportional fit, svh/dvh handles vertical fit).
   - On mobile, if a hero side-card can't fit alongside everything, let it reflow below and shrink the headline so the core (headline + CTA + proof) still fits one screen; heavy secondary content may move just below the fold, but the primary CTA and proof never do.
   - **Verify before shipping:** check the rendered hero at 1440×900 (desktop) and 390×844 (mobile) and confirm the proof line and both CTAs are on-screen with no clipping; tighten the `clamp()` maxes/gaps until they are. Same discipline for any other section meant to read as a single screen.
-- Responsive, reduced-motion safe, scroll-reveal, mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
+- Responsive, reduced-motion safe, scroll-reveal (**below the fold only** — never put the reveal/entrance-animation class on the hero or header: an `opacity:0` LCP element can't paint until JS runs, which wrecks mobile LCP; §2b auto-strips it as a safety net), mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
 
@@ -65,6 +65,13 @@ It runs the Apify actor `solidcode~google-maps-photos-scraper` synchronously (ru
 Then build the gallery **from `gallery.json`** — a responsive image grid in `index.html`. Wrap each photo in a `<picture>` whose `<source type="image/webp">` lists both variants as a `srcset` with width descriptors — `gallery/<file_sm> <width_sm>w, gallery/<file> <width>w` — plus a `sizes` attribute that matches how wide the image actually renders in your grid at each breakpoint, so phones fetch the small file and desktops the large one. Set the `<img>`'s `width`/`height` from the manifest's `width`/`height` (kills layout shift → CLS 0) and `loading="lazy"` on gallery shots. If an entry has no `file_sm` (photo was already small) or no `width` (Pillow absent → JPEG fallback), just use the single `file`. If you place a GBP photo **above the fold** (e.g. a hero), don't lazy-load it — `fetchpriority="high"` it and add a responsive preload (`<link rel="preload" as="image" imagesrcset="…" imagesizes="…">`) so it doesn't gate LCP. Only render the gallery if photos were downloaded; pick the flattering, on-brand shots.
 
 Note: these are public Google Maps photos — a mix of owner- and customer-posted (this actor doesn't reliably label which, so `--owner-only` is a no-op; skip it). That's fine for the client's own site. Just curate: use the good ones.
+
+## 2b. LCP guard — never let a reveal animation hide the hero (auto-fix)
+The scroll-reveal system parks elements at `opacity: 0` until main.js reveals them. Harmless below the fold — but on an above-the-fold element (hero, header) the LCP element can't paint until main.js has downloaded and run, which on throttled mobile is a multi-second "element render delay" that tanks LCP (a 3s LCP that's ~2.9s render delay, not image load). After `index.html` + `styles.css` are written, run the guard:
+```
+python3 <skill-dir>/scripts/lcp_guard.py --html ~/dev/<slug>/public/index.html --css ~/dev/<slug>/public/styles.css
+```
+It auto-detects the classes your CSS parks at `opacity:0` with a transition/animation and strips them off every element up to the end of the hero `<section>` so the first screen paints immediately; below-the-fold reveals stay. Stdlib-only, idempotent — run it on every build.
 
 ## 3. Wire up deploy tooling
 In `~/dev/<slug>/` write `package.json`:
