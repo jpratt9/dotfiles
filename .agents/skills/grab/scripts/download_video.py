@@ -6,6 +6,8 @@ import os
 import subprocess
 import sys
 import time
+import urllib.parse
+import urllib.request
 
 # YouTube throws transient 403s under load. Back off these many seconds between
 # retries -- four attempts total (initial + one per backoff) -- then give up.
@@ -82,7 +84,79 @@ def sanitize(text: str, limit: int) -> str:
     return safe[:limit].strip(" -_")
 
 
+# TikTok photo (slideshow) posts use a /photo/ URL that yt-dlp's extractor does
+# not match ("Unsupported URL"), so they are resolved via a public API instead.
+TIKTOK_RESOLVER = "https://www.tikwm.com/api/"
+
+
+def _is_tiktok_photo(url: str) -> bool:
+    low = url.lower()
+    return "tiktok.com" in low and "/photo/" in low
+
+
+def _resolve_tiktok_url(url: str) -> str:
+    """A shortened TikTok link (vm./vt.tiktok.com/XXXX) redirects to the canonical
+    /video/ or /photo/ URL. Follow it so photo posts can be detected -- the short
+    form contains neither marker. Returns the original URL on any failure."""
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            return resp.url
+    except Exception:
+        return url
+
+
+def download_tiktok_photo(url: str) -> dict:
+    """Download a TikTok photo post's image(s) and report its sound name. yt-dlp
+    can't extract these, so resolve the image URLs + music via tikwm, then fetch
+    the images with the stdlib. Returns {photos: [...], sound: ...} rather than a
+    single video file, so callers can send the images and add the sound manually."""
+    api = TIKTOK_RESOLVER + "?" + urllib.parse.urlencode({"url": url})
+    try:
+        req = urllib.request.Request(api, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            payload = json.load(resp)
+    except Exception as exc:
+        return {"error": f"Failed to resolve TikTok photo post: {exc}"}
+    if payload.get("code") != 0:
+        return {"error": f"TikTok photo resolver error: {payload.get('msg')}"}
+
+    data = payload.get("data") or {}
+    images = data.get("images") or []
+    if not images:
+        return {"error": "No images found in TikTok photo post."}
+
+    title = " ".join((data.get("title") or "").split()) or "TikTok photo"
+    music = data.get("music_info") or {}
+    sound = " - ".join(p for p in (music.get("title"), music.get("author")) if p) or "Unknown"
+
+    stem = sanitize(title, 80) or "tiktok_photo"
+    download_dir = os.path.expanduser("~/Downloads")
+    photos = []
+    for i, img_url in enumerate(images, start=1):
+        # Number the files only for real slideshows so a single-image post keeps a clean name.
+        suffix = f" {i}" if len(images) > 1 else ""
+        path = os.path.join(download_dir, f"{stem}{suffix}.jpg")
+        try:
+            req = urllib.request.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
+            with urllib.request.urlopen(req, timeout=60) as r, open(path, "wb") as f:
+                f.write(r.read())
+        except Exception as exc:
+            return {"error": f"Failed to download image {i}: {exc}"}
+        photos.append(path)
+
+    return {"title": title, "platform": "TikTok", "sound": sound, "photos": photos}
+
+
 def download_video(url: str) -> dict:
+    # TikTok photo posts need a different path entirely -- yt-dlp can't touch them.
+    # Shortened links (vm./vt.) carry no /photo/ marker, so expand them first.
+    low = url.lower()
+    if "tiktok.com" in low and "/photo/" not in low and "/video/" not in low:
+        url = _resolve_tiktok_url(url)
+    if _is_tiktok_photo(url):
+        return download_tiktok_photo(url)
+
     platform = detect_platform(url)
 
     # Get metadata first

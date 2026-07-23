@@ -66,6 +66,22 @@ Then build the gallery **from `gallery.json`** — a responsive image grid in `i
 
 Note: these are public Google Maps photos — a mix of owner- and customer-posted (this actor doesn't reliably label which, so `--owner-only` is a no-op; skip it). That's fine for the client's own site. Just curate: use the good ones.
 
+## 2a-fb. Facebook Page photos (alternative / additional source)
+Many local businesses post far more real photos to their **Facebook Page** than to Google — and every Page post is the business's *own* content (genuine owner/brand shots, no customer noise). Use this when §1 turned up a **Facebook Page URL** and either the GBP pull yielded nothing (no Maps URL, no token, none returned) or you want more/better on-brand shots. It's the GBP sibling: same token, same output, same gallery build.
+
+Same Apify token as §2a (envchain namespace `apify`, var `APIFY_TOKEN`). Run:
+```
+envchain apify python3 <skill-dir>/scripts/fetch_fb_photos.py \
+  --url "<facebook page url>" \
+  --out ~/dev/<slug>/public/assets/gallery \
+  --max 12 --max-posts 25
+```
+It runs the Facebook-page actor synchronously, walks the page's recent posts (`--max-posts`), pulls each photo (single-photo posts **and** every image in album posts; videos are skipped), downloads up to `--max`, and **converts each to the same width-capped WebP variants** as §2a — writing an **identical `gallery.json`** (file, width, height, file_sm, width_sm, category, owner, source, place; `owner` is always `true` here since it's the page's own posts). So **build the gallery exactly as in §2a** from `gallery.json`; the `<picture>`/srcset wiring is unchanged. Exit codes match too (0 = ok, 2 = none, 3 = bad usage/token, 4 = actor failed) — handle gracefully and fall back to the photo-light layout.
+
+Facebook CDN URLs are already resized and **signed with an expiry** (`oh=`/`oe=`), so the script downloads them immediately and never rewrites them (mutating the URL breaks the signature; you get the CDN's ~590–640px render, plenty for a gallery). Curate to the flattering, on-brand shots.
+
+Actor: `api-empire/facebook-page-posts-scraper` (input `startUrls` + `maxPostsPerProfile`, Apify proxy on) — same ~$/run ballpark as the GBP pull.
+
 ## 2b. LCP guard — never let a reveal animation hide the hero (auto-fix)
 The scroll-reveal system parks elements at `opacity: 0` until main.js reveals them. Harmless below the fold — but on an above-the-fold element (hero, header) the LCP element can't paint until main.js has downloaded and run, which on throttled mobile is a multi-second "element render delay" that tanks LCP (a 3s LCP that's ~2.9s render delay, not image load). After `index.html` + `styles.css` are written, run the guard:
 ```
