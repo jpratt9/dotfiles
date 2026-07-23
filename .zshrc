@@ -136,3 +136,23 @@ localwebdev() {
     gh repo create "$1" --private --source=. --remote=origin || return 1
     claude
 }
+
+# --- keep Antigravity/Gemini skills in sync with ~/.agents/skills ---
+# Antigravity (agy) reads ~/.gemini/skills — one symlink per skill into
+# ~/.claude/skills. Skills added to the shared dir aren't linked automatically,
+# so mirror any that are missing on shell start. Idempotent: only creates links
+# that don't already exist; never removes or clobbers anything.
+sync_gemini_skills() {
+  local src="$HOME/.agents/skills" dst="$HOME/.gemini/skills" d name made=0
+  [[ -d "$src" ]] || return 0
+  mkdir -p "$dst"
+  for d in "$src"/*/; do
+    [[ -f "$d/SKILL.md" ]] || continue                     # skip incomplete skills
+    name=${${d%/}:t}
+    [[ -e "$dst/$name" || -L "$dst/$name" ]] && continue   # already present
+    ln -s "../../.claude/skills/$name" "$dst/$name" && (( made++ ))
+  done
+  (( made )) && print -u2 "gemini: linked $made new skill(s)"
+}
+sync_gemini_skills
+# --- end gemini skills sync ---
