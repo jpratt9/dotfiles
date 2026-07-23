@@ -11,25 +11,53 @@ import time
 # retries -- four attempts total (initial + one per backoff) -- then give up.
 BACKOFFS_403 = (3, 6, 9)
 
+# A connection dropped mid-fetch (TikTok's "RemoteDisconnected" especially)
+# almost always succeeds on an immediate re-run, so retry these with no backoff.
+IMMEDIATE_RETRIES = 3
+CONNECTION_DROP_SIGNS = (
+    "connection aborted",
+    "remotedisconnected",
+    "remote end closed connection",
+    "connection reset",
+    "read timed out",
+)
+
 
 def _is_403(stderr: str) -> bool:
     low = (stderr or "").lower()
     return "403" in low or "forbidden" in low
 
 
+def _is_connection_drop(stderr: str) -> bool:
+    low = (stderr or "").lower()
+    return any(sign in low for sign in CONNECTION_DROP_SIGNS)
+
+
 def run_ytdlp(cmd: list[str], timeout: int) -> subprocess.CompletedProcess:
-    """Run a yt-dlp command, retrying a transient 403 with a 3/6/9-second backoff
-    before giving up. Any non-403 failure returns immediately -- no point waiting
-    on a bad URL or an unsupported site."""
-    result = None
-    for attempt, backoff in enumerate((*BACKOFFS_403, None), start=1):
+    """Run a yt-dlp command, retrying transient failures before giving up: a 403
+    (YouTube under load) backs off 3/6/9s, and a dropped connection (common on
+    TikTok) retries immediately up to 3 times. Each class has its own counter, so
+    a flapping connection can't loop forever. Any other failure returns at once --
+    no point waiting on a bad URL or an unsupported site."""
+    attempts_403 = 0
+    attempts_drop = 0
+    while True:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=timeout)
-        if result.returncode == 0 or backoff is None or not _is_403(result.stderr):
+        if result.returncode == 0:
             return result
-        print(f"[grab] got a 403; backing off {backoff}s and retrying "
-              f"(attempt {attempt}/{len(BACKOFFS_403) + 1})…", file=sys.stderr)
-        time.sleep(backoff)
-    return result
+        if _is_403(result.stderr) and attempts_403 < len(BACKOFFS_403):
+            backoff = BACKOFFS_403[attempts_403]
+            attempts_403 += 1
+            print(f"[grab] got a 403; backing off {backoff}s and retrying "
+                  f"(retry {attempts_403}/{len(BACKOFFS_403)})…", file=sys.stderr)
+            time.sleep(backoff)
+            continue
+        if _is_connection_drop(result.stderr) and attempts_drop < IMMEDIATE_RETRIES:
+            attempts_drop += 1
+            print(f"[grab] connection dropped; immediate retry "
+                  f"{attempts_drop}/{IMMEDIATE_RETRIES}…", file=sys.stderr)
+            continue
+        return result
 
 
 def detect_platform(url: str) -> str:

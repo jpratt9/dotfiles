@@ -7,7 +7,14 @@ import subprocess
 import unittest
 from unittest.mock import patch, MagicMock
 
-from download_video import detect_platform, download_video
+from download_video import (
+    BACKOFFS_403,
+    IMMEDIATE_RETRIES,
+    _is_connection_drop,
+    detect_platform,
+    download_video,
+    run_ytdlp,
+)
 
 
 class TestDetectPlatform(unittest.TestCase):
@@ -145,6 +152,66 @@ class TestPosterInFilename(unittest.TestCase):
         result = self._run({"title": "T" * 300, "duration": 5,
                             "uploader": "U" * 300})
         self.assertLessEqual(len(os.path.basename(result["file"]).encode()), 255)
+
+
+class TestRunYtdlpRetry(unittest.TestCase):
+    """Transient failures retry; everything else returns on the first attempt."""
+
+    # The exact stderr yt-dlp emitted in the report that prompted this feature.
+    TIKTOK_DROP = (
+        "ERROR: [vm.tiktok] ZTANUtmHd: Unable to download webpage: "
+        "('Connection aborted.', RemoteDisconnected('Remote end closed "
+        "connection without response'))"
+    )
+
+    def test_real_tiktok_error_is_detected_as_a_drop(self):
+        self.assertTrue(_is_connection_drop(self.TIKTOK_DROP))
+
+    @patch("download_video.subprocess.run")
+    def test_connection_drop_retries_immediately_then_succeeds(self, mock_run):
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stderr=self.TIKTOK_DROP),
+            MagicMock(returncode=1, stderr=self.TIKTOK_DROP),
+            MagicMock(returncode=0, stdout="ok"),
+        ]
+        result = run_ytdlp(["yt-dlp", "x"], timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(mock_run.call_count, 3)
+
+    @patch("download_video.subprocess.run")
+    def test_connection_drop_gives_up_after_three_retries(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr=self.TIKTOK_DROP)
+        result = run_ytdlp(["yt-dlp", "x"], timeout=10)
+        self.assertEqual(result.returncode, 1)
+        # one initial attempt + IMMEDIATE_RETRIES, then it fails.
+        self.assertEqual(mock_run.call_count, 1 + IMMEDIATE_RETRIES)
+
+    @patch("download_video.subprocess.run")
+    def test_non_transient_error_is_not_retried(self, mock_run):
+        mock_run.return_value = MagicMock(returncode=1, stderr="ERROR: Video unavailable")
+        result = run_ytdlp(["yt-dlp", "x"], timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(mock_run.call_count, 1)
+
+    @patch("download_video.time.sleep")
+    @patch("download_video.subprocess.run")
+    def test_403_still_backs_off_then_succeeds(self, mock_run, mock_sleep):
+        mock_run.side_effect = [
+            MagicMock(returncode=1, stderr="HTTP Error 403: Forbidden"),
+            MagicMock(returncode=0, stdout="ok"),
+        ]
+        result = run_ytdlp(["yt-dlp", "x"], timeout=10)
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(mock_run.call_count, 2)
+        mock_sleep.assert_called_once_with(BACKOFFS_403[0])
+
+    @patch("download_video.time.sleep")
+    @patch("download_video.subprocess.run")
+    def test_403_gives_up_after_its_backoffs(self, mock_run, mock_sleep):
+        mock_run.return_value = MagicMock(returncode=1, stderr="403 forbidden")
+        result = run_ytdlp(["yt-dlp", "x"], timeout=10)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(mock_run.call_count, 1 + len(BACKOFFS_403))
 
 
 if __name__ == "__main__":
