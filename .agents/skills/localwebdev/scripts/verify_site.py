@@ -337,9 +337,19 @@ PROBE_JS = r"""
   // 2. hero fold — only meaningful on a page that has a hero section
   const hero = document.querySelector('section[class*="hero" i]');
   if (hero) {
+    // A decorative layer deliberately sized past its box (e.g. `inset: -10%`)
+    // and clipped by an ancestor's overflow isn't visible past the fold.
+    const clippedVertically = e => {
+      for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) {
+        const oy = getComputedStyle(p).overflowY;
+        if (oy === 'hidden' || oy === 'clip' || oy === 'auto' || oy === 'scroll') return true;
+      }
+      return false;
+    };
     const clipped = [...hero.querySelectorAll('*')].filter(e => {
       if (!shown(e)) return false;
       if (e.closest('[hidden]')) return false;
+      if (clippedVertically(e)) return false;
       return e.getBoundingClientRect().bottom > vh + TOL;
     }).map(e => {
       const r = e.getBoundingClientRect();
