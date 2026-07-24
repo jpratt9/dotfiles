@@ -13,11 +13,14 @@ import stat
 
 TEMPLATE = '''#!/usr/bin/env bash
 # Deploy / redeploy the {name} site to Cloudflare Pages (Direct Upload).
-# Usage: ./deploy.sh   (or: npm run deploy)
+# Usage: ./deploy.sh          verify every page, then deploy
+#        ./deploy.sh --check  verify only, don't deploy
 set -euo pipefail
 cd "$(dirname "$0")"
 
 PROJECT="{project}"
+CHECK_ONLY=0
+[ "${{1:-}}" = "--check" ] && CHECK_ONLY=1
 
 # Ensure wrangler is available (installed as a devDependency).
 if [ ! -x "node_modules/.bin/wrangler" ]; then
@@ -53,6 +56,32 @@ if [ -f "$TURNSTILE" ]; then
   fi
 fi
 
+# Verify every page in public/ before anything ships: hard assertions (fold,
+# overflow, broken images, form submit) AND a screen-by-screen filmstrip written
+# to .verify/. Assertion failure aborts the deploy. The filmstrip is for eyes --
+# nothing here can judge whether a page merely looks wrong, so READ THE FRAMES.
+VERIFY="{verify}"
+if [ -f "$VERIFY" ]; then
+  for page in public/*.html; do
+    [ -e "$page" ] || continue
+    echo "→ verifying $(basename "$page") ..."
+    set +e
+    python3 "$VERIFY" --dir . --page "$(basename "$page")"
+    v_rc=$?
+    set -e
+    # 4 = Chrome unavailable on this machine; not a fault in the site.
+    if [ $v_rc -ne 0 ] && [ $v_rc -ne 4 ]; then
+      echo "✗ $(basename "$page") failed verification (exit $v_rc) -- not deploying." >&2
+      exit $v_rc
+    fi
+  done
+fi
+
+if [ "$CHECK_ONLY" -eq 1 ]; then
+  echo "✓ checks passed (--check: not deploying)"
+  exit 0
+fi
+
 echo "→ deploying ./public to ${{PROJECT}}.pages.dev ..."
 node_modules/.bin/wrangler pages deploy public \\
   --project-name="${{PROJECT}}" \\
@@ -72,9 +101,12 @@ def main():
 
     name = args.name or args.project
     path = os.path.join(os.path.expanduser(args.dir), "deploy.sh")
-    turnstile = os.path.join(os.path.dirname(os.path.abspath(__file__)), "ensure_turnstile.py")
+    here = os.path.dirname(os.path.abspath(__file__))
+    turnstile = os.path.join(here, "ensure_turnstile.py")
+    verify = os.path.join(here, "verify_site.py")
     with open(path, "w") as f:
-        f.write(TEMPLATE.format(project=args.project, name=name, turnstile=turnstile))
+        f.write(TEMPLATE.format(project=args.project, name=name,
+                                turnstile=turnstile, verify=verify))
     # chmod +x
     os.chmod(path, os.stat(path).st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
     print(f"wrote {path} (chmod +x)")

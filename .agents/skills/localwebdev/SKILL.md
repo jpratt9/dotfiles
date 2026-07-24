@@ -101,15 +101,16 @@ python3 <skill-dir>/scripts/lcp_guard.py --html ~/dev/<slug>/public/index.html -
 ```
 It auto-detects the classes your CSS parks at `opacity:0` with a transition/animation and strips them off every element up to the end of the hero `<section>` so the first screen paints immediately; below-the-fold reveals stay. Stdlib-only, idempotent — run it on every build.
 
-## 2d-pre. Verify the build (ALWAYS — before deploying)
-Run this on **every page you ship** once `index.html`/`contact.html`/`styles.css` are written. It is the whole pre-deploy check; do NOT hand-roll a Chrome screenshot loop.
+## 2d-pre. Verify the build (automatic — it's part of deploy.sh)
+**`deploy.sh` verifies every page in `public/` before it uploads anything** (§3 wires this in), so a normal `./deploy.sh` covers it and there is no separate command to remember. To check without deploying while you're still iterating:
 ```
-python3 <skill-dir>/scripts/verify_site.py --dir ~/dev/<slug>
-python3 <skill-dir>/scripts/verify_site.py --dir ~/dev/<slug> --page contact.html
+cd ~/dev/<slug> && ./deploy.sh --check
 ```
-~6s per viewport, three viewports by default (390×844, 768×1024, 1440×900). Exit `0` = ship it, `1` = a check failed (fix and re-run), `3` = bad args/page, `4` = Chrome unavailable (skip, don't block the build). Add `--shot out.png` for one PNG artifact, `--json` for the raw report, `--viewport WxH` (repeatable) to narrow it.
+Any assertion failure aborts the deploy — a broken page cannot reach the client. ~25s per page, three viewports (390×844, 768×1024, 1440×900). Do NOT hand-roll a Chrome screenshot loop.
 
-It also **submits the form in a real browser** (with `fetch` stubbed, so it never reaches FormBackend and never creates a junk lead) and checks where the user is left afterwards. Add `--no-form` / `--no-static` to skip those passes.
+Two halves, and **both are required**: hard assertions that abort the deploy (below), and a screen-by-screen **filmstrip you have to look at** (see below — the only thing that catches a page that is merely ugly).
+
+It also **submits the form in a real browser** (with `fetch` stubbed, so it never reaches FormBackend and never creates a junk lead) and checks where the user is left afterwards.
 
 It fails the build on, and names the exact elements causing:
 - `document_collapse` — the page changed height on submit, sliding content out from under the user (fix per §2c)
@@ -123,6 +124,17 @@ It fails the build on, and names the exact elements causing:
 - `hidden_hero` — an above-the-fold element still parked at `opacity: 0` (backstop for §2b)
 
 **Why a script and not screenshots:** `chrome --headless --screenshot` routinely never exits, so each capture costs a subprocess timeout instead of ~2s; and `--window-size=390,844` does *not* give a 390px viewport — Chrome clamps windows to a ~500px minimum, so "mobile" screenshots silently render at 500px and hide real bugs. This drives Chrome over the DevTools Protocol and sets the viewport with `Emulation.setDeviceMetricsOverride`, so the numbers are real. Stdlib-only.
+
+### The filmstrip — LOOK AT EVERY FRAME
+Every run photographs each page **one full screen at a time, top to bottom**, at every viewport, into `~/dev/<slug>/.verify/` as `<page>-<W>x<H>-NN.png`, and prints the path of every frame. **This is not optional output — `Read` every frame.** A ~10,000px page is ~13 screens per viewport, so a two-page build is ~40 images. Read them all. Run `./deploy.sh --check` first, read the frames, fix, then `./deploy.sh` for real.
+
+**Why:** the assertions above are blind to everything that is merely *wrong-looking*. They pass, green, on a hero rendering full-bleed with no side padding, a section collapsed to a sliver, text overlapping an image, a headline breaking to an orphan word, a colour that clashes. Those are exactly the bugs that lose the client, and the only thing that catches them is something actually looking at each screen the way a visitor would. That judgement is the point — an assertion cannot make it, and a single squeezed full-page capture is too small to make it from.
+
+When a frame looks wrong: fix the CSS, re-run, re-read. Do not deploy with a frame you have not looked at, and do not talk yourself out of one that looks off.
+
+Frames are regenerated every run (stale ones for that page+viewport are deleted first), so `.verify/` is disposable — it belongs in `.gitignore` (§4). `--no-filmstrip` skips the capture and `--filmstrip-dir` moves it, but **do not pass `--no-filmstrip` on a real build.**
+
+Mechanically it is careful about three things that would otherwise make the frames lie: it forces every scroll-reveal element visible (detected by behaviour — transition/animation + `opacity: 0` — not by class name, so it works whatever the build called them), eagerly loads every `loading="lazy"` image and waits for decode, and freezes all animation so two runs of the same page match. Without those, below-the-fold sections photograph as empty bands and you chase bugs that aren't there.
 
 ## 2c. Contact page + estimate form (ALWAYS)
 Every build ships `public/contact.html` (same theme; also lists their phone/SMS/social links) with this form, restyled to the site's brand. Use the access key from `<skill-dir>/.env` (`WEB3FORMS_ACCESS_KEY`):
@@ -186,7 +198,7 @@ Direct Upload bypasses the 500-builds/month limit. Verify against the LIVE url w
 Then back up the project to a **private** GitHub repo (repo name = `<slug>`):
 ```
 cd ~/dev/<slug>
-printf 'node_modules/\n.wrangler/\n.DS_Store\n' > .gitignore
+printf 'node_modules/\n.wrangler/\n.verify/\n.DS_Store\n' > .gitignore
 git init -q -b main && git add -A && git commit -q -m "[feat] <slug> site"
 gh repo create <slug> --private --source=. --remote=origin --push
 ```

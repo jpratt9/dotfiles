@@ -545,6 +545,107 @@ SUBMIT_JS = r"""
 """
 
 
+# Prepares a page to be photographed screen-by-screen. Without this the frames
+# are worthless: below-the-fold sections photograph as empty bands (scroll-reveal
+# parks them at opacity:0), lazy images photograph as blank boxes, and any
+# infinite animation makes no two runs alike.
+FILMSTRIP_PREP_JS = r"""
+(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  if (document.readyState !== 'complete') {
+    await new Promise(r => window.addEventListener('load', r, { once: true }));
+  }
+
+  // 1. Freeze animation + transition so two runs of the same page match.
+  const st = document.createElement('style');
+  st.setAttribute('data-verify-filmstrip', '');
+  st.textContent = '*,*::before,*::after{animation-play-state:paused !important;' +
+                   'animation-delay:-1ms !important;transition:none !important;}';
+  document.head.appendChild(st);
+
+  // 2. Lazy images must fetch now or they photograph as blank boxes.
+  for (const img of document.images) {
+    img.loading = 'eager';
+    try { img.decoding = 'sync'; } catch (e) {}
+  }
+
+  // 3. Round-trip the scroll to fire every IntersectionObserver and lazy fetch,
+  //    then come back to the top. Also settles the height, which grows as
+  //    lazy images arrive -- measuring before this gives too few frames.
+  const H = () => document.documentElement.scrollHeight;
+  const vh = window.innerHeight;
+  for (let y = 0; y < H(); y += vh) { window.scrollTo(0, y); await sleep(40); }
+  window.scrollTo(0, H()); await sleep(200);
+  window.scrollTo(0, 0);   await sleep(120);
+
+  // 4. Un-hide anything still parked at opacity:0 by a reveal system. Detected
+  //    by BEHAVIOUR (transition/animation + transparent), not by class name, so
+  //    it works no matter what a given build called the class.
+  for (const el of document.querySelectorAll('body *')) {
+    const c = getComputedStyle(el);
+    const animated = c.transitionDuration !== '0s' || c.animationName !== 'none';
+    if (animated && parseFloat(c.opacity) < 0.05) {
+      el.style.setProperty('opacity', '1', 'important');
+      el.style.setProperty('transform', 'none', 'important');
+    }
+  }
+
+  // 5. Let every image finish decoding so nothing photographs half-painted.
+  await Promise.all([...document.images]
+    .filter(i => i.src && !i.complete)
+    .map(i => new Promise(r => { i.onload = i.onerror = r; setTimeout(r, 3000); })));
+  await sleep(150);
+
+  window.scrollTo(0, 0);
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+  return JSON.stringify({ height: H(), viewportH: window.innerHeight });
+})()
+"""
+
+
+def capture_filmstrip(chrome, out_dir, page_name, width, height):
+    """Photograph the page one full screen at a time, top to bottom.
+
+    Deliberately NOT a single tall full-page capture: a 10000px page squeezed
+    into one image is unreadable, and the whole point is that something can
+    actually look at each screen the way a visitor would see it.
+    """
+    res = chrome.call("Runtime.evaluate", {
+        "expression": FILMSTRIP_PREP_JS, "awaitPromise": True, "returnByValue": True,
+    }, timeout=120)
+    raw = res.get("result", {}).get("value")
+    info = json.loads(raw) if raw else {"height": height}
+    total = max(int(info.get("height") or height), height)
+
+    # ceil(total / height) without importing math
+    frames = max(1, (total + height - 1) // height)
+    stem = f"{page_name}-{width}x{height}-"
+
+    # Drop stale frames for this page+viewport so an old longer run can't leave
+    # orphans that look like current output.
+    try:
+        for old in os.listdir(out_dir):
+            if old.startswith(stem) and old.endswith(".png"):
+                os.remove(os.path.join(out_dir, old))
+    except OSError:
+        pass
+
+    paths = []
+    for i in range(frames):
+        y = min(i * height, max(0, total - height))
+        chrome.call("Runtime.evaluate", {
+            "expression": f"window.scrollTo(0,{y}); 0", "returnByValue": True,
+        })
+        time.sleep(0.14)
+        img = chrome.call("Page.captureScreenshot", {"format": "png"})
+        path = os.path.join(out_dir, f"{stem}{i + 1:02d}.png")
+        with open(path, "wb") as f:
+            f.write(base64.b64decode(img["data"]))
+        paths.append(path)
+
+    return {"viewport": f"{width}x{height}", "page_height": total, "frames": paths}
+
+
 def check_form_submit(chrome, url, width, height):
     """Submit the page's form with fetch stubbed out, then report where the user
     is left. Returns None when the page has no form."""
@@ -626,7 +727,8 @@ def parse_viewport(text):
         raise ValueError(f"bad viewport {text!r}, expected WIDTHxHEIGHT e.g. 390x844")
 
 
-def check_page(chrome, url, width, height, shot_path=None):
+def check_page(chrome, url, width, height, shot_path=None,
+               filmstrip_dir=None, page_name=None):
     """Load `url` at an exact viewport and return the probe's report."""
     chrome.call("Emulation.setDeviceMetricsOverride", {
         "width": width, "height": height,
@@ -645,6 +747,11 @@ def check_page(chrome, url, width, height, shot_path=None):
         img = chrome.call("Page.captureScreenshot", {"format": "png"})
         with open(shot_path, "wb") as f:
             f.write(base64.b64decode(img["data"]))
+    # Runs last: the prep mutates the DOM (forces reveals visible, freezes
+    # animation), so it must not happen before the probe has measured.
+    if filmstrip_dir:
+        report["filmstrip"] = capture_filmstrip(
+            chrome, filmstrip_dir, page_name, width, height)
     return report
 
 
@@ -684,6 +791,10 @@ def main(argv=None):
                     help="skip the submit-the-form check")
     ap.add_argument("--no-static", action="store_true",
                     help="skip the static CSS invariant checks")
+    ap.add_argument("--no-filmstrip", action="store_true",
+                    help="skip the screen-by-screen capture (ON by default)")
+    ap.add_argument("--filmstrip-dir", default=None,
+                    help="where frames are written (default <dir>/.verify)")
     args = ap.parse_args(argv)
 
     page = os.path.join(os.path.expanduser(args.dir), "public", args.page)
@@ -702,6 +813,18 @@ def main(argv=None):
         return 4
 
     url = "file://" + os.path.abspath(page)
+    page_name = os.path.splitext(os.path.basename(args.page))[0]
+
+    filmstrip_dir = None
+    if not args.no_filmstrip:
+        filmstrip_dir = args.filmstrip_dir or os.path.join(
+            os.path.expanduser(args.dir), ".verify")
+        try:
+            os.makedirs(filmstrip_dir, exist_ok=True)
+        except OSError as e:
+            log(f"cannot write filmstrip to {filmstrip_dir}: {e}")
+            filmstrip_dir = None
+
     reports = []
     with tempfile.TemporaryDirectory(prefix="verify-chrome-") as profile:
         try:
@@ -712,8 +835,10 @@ def main(argv=None):
         try:
             for i, (w, h) in enumerate(viewports):
                 last = i == len(viewports) - 1
-                reports.append(check_page(chrome, url, w, h,
-                                          args.shot if (last and args.shot) else None))
+                reports.append(check_page(
+                    chrome, url, w, h,
+                    args.shot if (last and args.shot) else None,
+                    filmstrip_dir=filmstrip_dir, page_name=page_name))
             if not args.no_form:
                 # narrowest viewport — where a post-submit scroll jump actually bites
                 w, h = min(viewports, key=lambda v: v[0])
@@ -739,6 +864,25 @@ def main(argv=None):
             print(line, file=sys.stderr)
         for kind, detail in sorted(static_fails.items()):
             print(f"FAIL static  {kind}: {detail}", file=sys.stderr)
+
+    strips = [r["filmstrip"] for r in reports if r.get("filmstrip")]
+    if strips and not args.json:
+        total = sum(len(s["frames"]) for s in strips)
+        print("", file=sys.stderr)
+        for s in strips:
+            print(f"  {s['viewport']}  ({s['page_height']}px tall, "
+                  f"{len(s['frames'])} screens)", file=sys.stderr)
+            for p in s["frames"]:
+                print(f"    {p}", file=sys.stderr)
+        print("", file=sys.stderr)
+        print(f"  ^^ READ ALL {total} FRAME(S) ABOVE BEFORE DEPLOYING. The assertions "
+              f"cannot judge", file=sys.stderr)
+        print("     visual quality -- they pass happily on a hero with no padding, a "
+              "section", file=sys.stderr)
+        print("     collapsed to a sliver, or text sitting on top of an image. Look at "
+              "every", file=sys.stderr)
+        print("     screen, fix what looks wrong, re-run.", file=sys.stderr)
+
     log(f"{args.page}: {'all checks passed' if ok else f'{n} check(s) failed'}")
     return 0 if ok else 1
 

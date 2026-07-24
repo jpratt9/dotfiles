@@ -105,5 +105,67 @@ class TurnstileStepTests(unittest.TestCase):
             self.assertEqual(proc.returncode, 0, f"bash syntax error: {proc.stderr}")
 
 
+class VerifyStepTests(unittest.TestCase):
+    """deploy.sh must verify every page before it uploads anything."""
+
+    def _body(self, d):
+        run_main(["prog", "--project", "x", "--name", "X", "--dir", d])
+        with open(os.path.join(d, "deploy.sh")) as f:
+            return f.read()
+
+    def test_verifier_invoked_with_an_absolute_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            expected = os.path.join(
+                os.path.dirname(os.path.abspath(wds.__file__)), "verify_site.py")
+            self.assertIn(f'VERIFY="{expected}"', body)
+            self.assertTrue(os.path.isabs(expected))
+
+    def test_runs_before_the_upload(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertLess(body.index('python3 "$VERIFY"'),
+                            body.index("wrangler pages deploy public"),
+                            "a broken page must never reach the client")
+
+    def test_covers_every_html_page_not_just_index(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertIn("for page in public/*.html", body)
+            self.assertIn('--page "$(basename "$page")"', body)
+
+    def test_failure_aborts_the_deploy(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertIn("not deploying", body)
+            self.assertIn("exit $v_rc", body)
+
+    def test_exit_4_tolerated_because_chrome_may_be_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn("[ $v_rc -ne 0 ] && [ $v_rc -ne 4 ]", self._body(d))
+
+    def test_step_is_skipped_when_skill_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('if [ -f "$VERIFY" ]; then', self._body(d))
+
+    def test_check_flag_exits_before_deploying(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertIn('[ "${1:-}" = "--check" ] && CHECK_ONLY=1', body)
+            self.assertLess(body.index('CHECK_ONLY" -eq 1'),
+                            body.index("wrangler pages deploy public"),
+                            "--check must return before the upload")
+
+    def test_no_unrendered_verify_placeholder(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertNotIn("{verify}", self._body(d))
+
+    def test_glob_guarded_against_no_matches(self):
+        """`for page in public/*.html` yields the literal glob if nothing
+        matches, which would verify a file named '*.html'."""
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('[ -e "$page" ] || continue', self._body(d))
+
+
 if __name__ == "__main__":
     unittest.main()

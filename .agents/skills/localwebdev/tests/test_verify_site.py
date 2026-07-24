@@ -533,7 +533,7 @@ class MainTests(unittest.TestCase):
                  mock.patch.object(vs, "check_form_submit", return_value=None), \
                  mock.patch.object(vs, "static_checks", return_value={}), \
                  mock.patch.object(vs, "check_page",
-                                   side_effect=lambda c, u, w, h, shot_path=None: (
+                                   side_effect=lambda c, u, w, h, shot_path=None, **kw: (
                                        seen.append((w, h)) or
                                        {"viewport": {"w": w, "h": h}, "failures": {}})):
                 self.assertEqual(vs.main(["--dir", d]), 0)
@@ -572,7 +572,7 @@ class MainTests(unittest.TestCase):
                  mock.patch.object(vs, "check_form_submit", return_value=None), \
                  mock.patch.object(vs, "static_checks", return_value={}), \
                  mock.patch.object(vs, "check_page",
-                                   side_effect=lambda c, u, w, h, shot_path=None: (
+                                   side_effect=lambda c, u, w, h, shot_path=None, **kw: (
                                        urls.append(u) or
                                        {"viewport": {"w": w, "h": h}, "failures": {}})):
                 vs.main(["--dir", d, "--page", "contact.html", "--viewport", "390x844"])
@@ -580,6 +580,309 @@ class MainTests(unittest.TestCase):
             self.assertTrue(urls[0].startswith("file://"))
         finally:
             __import__("shutil").rmtree(d)
+
+
+# --------------------------------------------------------------------------
+# filmstrip — screen-by-screen capture
+# --------------------------------------------------------------------------
+
+class FilmstripPrepSourceTests(unittest.TestCase):
+    """The prep is a JS string. If it regresses the frames silently lie:
+    below-the-fold sections photograph blank and bugs get chased that
+    aren't there."""
+
+    def test_freezes_animation_so_runs_are_reproducible(self):
+        self.assertIn("animation-play-state:paused", vs.FILMSTRIP_PREP_JS)
+        self.assertIn("transition:none", vs.FILMSTRIP_PREP_JS)
+
+    def test_eager_loads_lazy_images(self):
+        self.assertIn("img.loading = 'eager'", vs.FILMSTRIP_PREP_JS)
+
+    def test_unhides_reveal_elements_by_behaviour_not_class_name(self):
+        """Class names differ per build, so detection must be behavioural."""
+        self.assertIn("transitionDuration", vs.FILMSTRIP_PREP_JS)
+        self.assertIn("animationName", vs.FILMSTRIP_PREP_JS)
+        self.assertIn("parseFloat(c.opacity) < 0.05", vs.FILMSTRIP_PREP_JS)
+        self.assertIn("'opacity', '1', 'important'", vs.FILMSTRIP_PREP_JS)
+        self.assertNotIn(".reveal", vs.FILMSTRIP_PREP_JS)
+
+    def test_round_trips_the_scroll_to_trigger_observers(self):
+        self.assertIn("window.scrollTo(0, H())", vs.FILMSTRIP_PREP_JS)
+        self.assertIn("window.scrollTo(0, 0)", vs.FILMSTRIP_PREP_JS)
+
+    def test_image_wait_is_bounded(self):
+        """Regression: a lazy image that never fires load/error would hang."""
+        self.assertIn("setTimeout(r, 3000)", vs.FILMSTRIP_PREP_JS)
+
+    def test_returns_measured_height(self):
+        self.assertIn("height: H()", vs.FILMSTRIP_PREP_JS)
+
+    def test_ends_at_top_of_page(self):
+        """Frame 01 must be the top of the page, not wherever prep left off."""
+        tail = vs.FILMSTRIP_PREP_JS.rstrip()[-260:]
+        self.assertIn("window.scrollTo(0, 0)", tail)
+
+
+class CaptureFilmstripTests(unittest.TestCase):
+    def _chrome(self, height=2000):
+        chrome = mock.Mock()
+        scrolls = []
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                expr = (params or {}).get("expression", "")
+                # the capture loop's scroll is exactly "window.scrollTo(0,N); 0";
+                # the prep script also contains scrollTo, so match on the prefix
+                if expr.startswith("window.scrollTo(0,"):
+                    scrolls.append(expr)
+                    return {"result": {"value": 0}}
+                return {"result": {"value": json.dumps(
+                    {"height": height, "viewportH": 844})}}
+            if method == "Page.captureScreenshot":
+                return {"data": vs.base64.b64encode(b"PNG").decode()}
+            return {}
+
+        chrome.call.side_effect = call
+        chrome.scrolls = scrolls
+        return chrome
+
+    def test_frame_count_covers_whole_page(self):
+        chrome = self._chrome(height=10855)
+        with tempfile.TemporaryDirectory() as d:
+            out = vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        # ceil(10855/844) == 13
+        self.assertEqual(len(out["frames"]), 13)
+        self.assertEqual(out["page_height"], 10855)
+        self.assertEqual(out["viewport"], "390x844")
+
+    def test_one_frame_for_a_single_screen_page(self):
+        chrome = self._chrome(height=600)
+        with tempfile.TemporaryDirectory() as d:
+            out = vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        self.assertEqual(len(out["frames"]), 1)
+
+    def test_scrolls_one_viewport_at_a_time(self):
+        chrome = self._chrome(height=2532)   # exactly 3 screens at 844
+        with tempfile.TemporaryDirectory() as d:
+            vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        offsets = [int(s.split("scrollTo(0,")[1].split(")")[0])
+                   for s in chrome.scrolls]
+        self.assertEqual(offsets, [0, 844, 1688])
+
+    def test_last_offset_is_clamped_to_max_scroll(self):
+        """A page that isn't a whole multiple must not scroll past the bottom."""
+        chrome = self._chrome(height=1000)
+        with tempfile.TemporaryDirectory() as d:
+            vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        offsets = [int(s.split("scrollTo(0,")[1].split(")")[0])
+                   for s in chrome.scrolls]
+        self.assertEqual(offsets, [0, 156])          # 1000 - 844
+        self.assertLessEqual(max(offsets), 1000 - 844)
+
+    def test_writes_one_png_per_screen_with_sortable_names(self):
+        chrome = self._chrome(height=2532)
+        with tempfile.TemporaryDirectory() as d:
+            out = vs.capture_filmstrip(chrome, d, "index", 390, 844)
+            self.assertEqual(sorted(os.listdir(d)),
+                             ["index-390x844-01.png",
+                              "index-390x844-02.png",
+                              "index-390x844-03.png"])
+            for p in out["frames"]:
+                with open(p, "rb") as f:
+                    self.assertEqual(f.read(), b"PNG")
+
+    def test_deletes_stale_frames_for_same_page_and_viewport(self):
+        """A previously longer page must not leave orphan frames behind."""
+        with tempfile.TemporaryDirectory() as d:
+            for i in range(1, 10):
+                open(os.path.join(d, f"index-390x844-{i:02d}.png"), "w").close()
+            # 500px page at an 844px viewport is a single screen
+            vs.capture_filmstrip(self._chrome(height=500), d, "index", 390, 844)
+            self.assertEqual(sorted(os.listdir(d)), ["index-390x844-01.png"])
+
+    def test_leaves_other_pages_and_viewports_alone(self):
+        with tempfile.TemporaryDirectory() as d:
+            keep = [os.path.join(d, "contact-390x844-01.png"),
+                    os.path.join(d, "index-1440x900-01.png")]
+            for p in keep:
+                open(p, "w").close()
+            vs.capture_filmstrip(self._chrome(height=900), d, "index", 390, 844)
+            for p in keep:
+                self.assertTrue(os.path.exists(p), f"{p} should not be deleted")
+
+    def test_awaits_the_prep_promise(self):
+        chrome = self._chrome()
+        with tempfile.TemporaryDirectory() as d:
+            vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        prep = [c[0][1] for c in chrome.call.call_args_list
+                if c[0][0] == "Runtime.evaluate"][0]
+        self.assertTrue(prep["awaitPromise"])
+        self.assertTrue(prep["returnByValue"])
+
+    def test_survives_prep_returning_nothing(self):
+        """Never crash the build over a filmstrip — fall back to one screen."""
+        chrome = mock.Mock()
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                return {"result": {}}
+            if method == "Page.captureScreenshot":
+                return {"data": vs.base64.b64encode(b"PNG").decode()}
+            return {}
+
+        chrome.call.side_effect = call
+        with tempfile.TemporaryDirectory() as d:
+            out = vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        self.assertEqual(len(out["frames"]), 1)
+        self.assertEqual(out["page_height"], 844)
+
+    def test_page_shorter_than_viewport_still_yields_one_frame(self):
+        chrome = self._chrome(height=100)
+        with tempfile.TemporaryDirectory() as d:
+            out = vs.capture_filmstrip(chrome, d, "index", 390, 844)
+        self.assertEqual(len(out["frames"]), 1)
+
+
+class CheckPageFilmstripTests(unittest.TestCase):
+    def _chrome(self):
+        chrome = mock.Mock()
+        report = json.dumps({"viewport": {"w": 390, "h": 844}, "failures": {}})
+        prep = json.dumps({"height": 1600, "viewportH": 844})
+        seen = {"probe": False}
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                expr = (params or {}).get("expression", "")
+                if expr.startswith("window.scrollTo(0,"):
+                    return {"result": {"value": 0}}
+                if not seen["probe"]:
+                    seen["probe"] = True
+                    return {"result": {"value": report}}
+                return {"result": {"value": prep}}
+            if method == "Page.captureScreenshot":
+                return {"data": vs.base64.b64encode(b"PNG").decode()}
+            return {}
+
+        chrome.call.side_effect = call
+        return chrome
+
+    def test_no_filmstrip_when_dir_not_given(self):
+        got = vs.check_page(self._chrome(), "file:///x.html", 390, 844)
+        self.assertNotIn("filmstrip", got)
+
+    def test_filmstrip_attached_to_report(self):
+        with tempfile.TemporaryDirectory() as d:
+            got = vs.check_page(self._chrome(), "file:///x.html", 390, 844,
+                                filmstrip_dir=d, page_name="index")
+        self.assertEqual(len(got["filmstrip"]["frames"]), 2)   # ceil(1600/844)
+
+    def test_capture_runs_after_the_probe(self):
+        """Prep mutates the DOM, so measuring must already be done."""
+        order = []
+        with tempfile.TemporaryDirectory() as d:
+            with mock.patch.object(vs, "capture_filmstrip",
+                                   side_effect=lambda *a, **k: order.append("strip") or {}):
+                chrome = self._chrome()
+                orig = chrome.call.side_effect
+
+                def spy(method, params=None, timeout=60):
+                    if method == "Runtime.evaluate" and not order:
+                        order.append("probe")
+                    return orig(method, params, timeout)
+
+                chrome.call.side_effect = spy
+                vs.check_page(chrome, "file:///x.html", 390, 844,
+                              filmstrip_dir=d, page_name="index")
+        self.assertEqual(order, ["probe", "strip"])
+
+
+class MainFilmstripTests(unittest.TestCase):
+    def _run(self, extra_argv):
+        d = make_project()
+        captured = {}
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
+                 mock.patch.object(
+                     vs, "check_page",
+                     side_effect=lambda c, u, w, h, shot_path=None, **kw: (
+                         captured.update(kw) or
+                         {"viewport": {"w": w, "h": h}, "failures": {}})):
+                rc = vs.main(["--dir", d, "--viewport", "390x844"] + extra_argv)
+            return rc, captured, d
+        finally:
+            __import__("shutil").rmtree(d, ignore_errors=True)
+
+    def test_filmstrip_is_on_by_default(self):
+        rc, kw, d = self._run([])
+        self.assertEqual(rc, 0)
+        self.assertTrue(kw["filmstrip_dir"].endswith(".verify"))
+        self.assertEqual(kw["page_name"], "index")
+
+    def test_no_filmstrip_flag_disables_it(self):
+        rc, kw, _ = self._run(["--no-filmstrip"])
+        self.assertEqual(rc, 0)
+        self.assertIsNone(kw["filmstrip_dir"])
+
+    def test_filmstrip_dir_can_be_overridden(self):
+        with tempfile.TemporaryDirectory() as out:
+            rc, kw, _ = self._run(["--filmstrip-dir", out])
+            self.assertEqual(rc, 0)
+            self.assertEqual(kw["filmstrip_dir"], out)
+
+    def test_default_dir_is_created(self):
+        d = make_project()
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
+                 mock.patch.object(
+                     vs, "check_page",
+                     side_effect=lambda c, u, w, h, shot_path=None, **kw:
+                         {"viewport": {"w": w, "h": h}, "failures": {}}):
+                vs.main(["--dir", d, "--viewport", "390x844"])
+            self.assertTrue(os.path.isdir(os.path.join(d, ".verify")))
+        finally:
+            __import__("shutil").rmtree(d, ignore_errors=True)
+
+    def test_page_name_strips_html_extension(self):
+        d = make_project(page="contact.html")
+        captured = {}
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
+                 mock.patch.object(
+                     vs, "check_page",
+                     side_effect=lambda c, u, w, h, shot_path=None, **kw: (
+                         captured.update(kw) or
+                         {"viewport": {"w": w, "h": h}, "failures": {}})):
+                vs.main(["--dir", d, "--page", "contact.html",
+                         "--viewport", "390x844"])
+            self.assertEqual(captured["page_name"], "contact")
+        finally:
+            __import__("shutil").rmtree(d, ignore_errors=True)
+
+    def test_unwritable_filmstrip_dir_does_not_fail_the_build(self):
+        d = make_project()
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
+                 mock.patch.object(vs.os, "makedirs",
+                                   side_effect=OSError("read-only fs")), \
+                 mock.patch.object(
+                     vs, "check_page",
+                     side_effect=lambda c, u, w, h, shot_path=None, **kw:
+                         {"viewport": {"w": w, "h": h}, "failures": {}}):
+                self.assertEqual(vs.main(["--dir", d, "--viewport", "390x844"]), 0)
+        finally:
+            __import__("shutil").rmtree(d, ignore_errors=True)
 
 
 if __name__ == "__main__":
