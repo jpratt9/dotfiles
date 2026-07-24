@@ -45,6 +45,15 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
   - **Scale hero type + spacing to the CONTAINER with `cqi`, not only the viewport** — this is what guarantees nothing clips on mobile. Put `container-type: inline-size` on the `.hero` (or a wrapper), then size the headline, subcopy, gaps and padding in container-inline units, e.g. `font-size: clamp(1.75rem, 9cqi, 5rem)`. Since `cqi` = 1% of the hero's own width, the headline scales down proportionally on a narrow phone (can't overflow horizontally, and its smaller height helps the block clear the fold), while the `clamp()` max still caps it on desktop. Note: an element can't query its own container — set `container-type` on the ancestor and size the children in `cqi`. Pair this with the `svh`/`dvh` sizing above (cqi handles width-proportional fit, svh/dvh handles vertical fit).
   - On mobile, if a hero side-card can't fit alongside everything, let it reflow below and shrink the headline so the core (headline + CTA + proof) still fits one screen; heavy secondary content may move just below the fold, but the primary CTA and proof never do.
   - **Verify before shipping:** don't eyeball this — run `scripts/verify_site.py` (§2e). It asserts the fold and overflow geometry at a true 390×844 and 1440×900 and exits non-zero with the offending elements named. Tighten the `clamp()` maxes/gaps until it passes. Same discipline for any other section meant to read as a single screen.
+- **Ship this defensive-CSS preamble in every `styles.css`.** It removes whole classes of mobile-overflow bug structurally, instead of leaving them to be found later:
+  ```css
+  *, *::before, *::after { box-sizing: border-box; min-width: 0; }
+  html { scroll-padding-top: calc(var(--nav-h) + 1rem); }
+  img, svg, video, iframe, canvas, table { display: block; max-width: 100%; }
+  p, li, h1, h2, h3, h4, blockquote, td, dd, dt { overflow-wrap: anywhere; }
+  ```
+  `min-width: 0` is the load-bearing line — flex/grid children default to `min-width: auto` (= min-content) and *refuse to shrink*, which is the single most common cause of a blown-out track. `scroll-padding-top` stops anchors and `scrollIntoView` landing under the sticky nav. `overflow-wrap` stops a long phone number or URL forcing a wide box.
+- **Never put `overflow-x: hidden` on `body`.** It hides horizontal overflow instead of fixing it and masks real bugs (it will also make a mobile screenshot look clipped rather than scrollable). When an element bleeds off-screen *on purpose* (a decorative ring, a rotated card), scope the containment to that element's own section with `overflow-x: clip` — §2d-pre understands scoped containment and won't flag it.
 - Responsive, reduced-motion safe, scroll-reveal (**below the fold only** — never put the reveal/entrance-animation class on the hero or header: an `opacity:0` LCP element can't paint until JS runs, which wrecks mobile LCP; §2b auto-strips it as a safety net), mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
@@ -100,8 +109,14 @@ python3 <skill-dir>/scripts/verify_site.py --dir ~/dev/<slug> --page contact.htm
 ```
 ~6s per viewport, three viewports by default (390×844, 768×1024, 1440×900). Exit `0` = ship it, `1` = a check failed (fix and re-run), `3` = bad args/page, `4` = Chrome unavailable (skip, don't block the build). Add `--shot out.png` for one PNG artifact, `--json` for the raw report, `--viewport WxH` (repeatable) to narrow it.
 
+It also **submits the form in a real browser** (with `fetch` stubbed, so it never reaches FormBackend and never creates a junk lead) and checks where the user is left afterwards. Add `--no-form` / `--no-static` to skip those passes.
+
 It fails the build on, and names the exact elements causing:
-- `overflow` — the page scrolls sideways (catches e.g. `min-height` + `aspect-ratio` back-computing a width too wide for its grid track)
+- `document_collapse` — the page changed height on submit, sliding content out from under the user (fix per §2c)
+- `confirmation_offscreen` / `confirmation_under_header` — the "sent" message isn't visible, or sits under the sticky nav
+- `native_navigation` — the form did a full-page POST instead of an AJAX submit
+- `missing_scroll_padding` / `overflow_x_hidden` / `no_min_width_reset` — static: the §2 defensive-CSS preamble is missing
+- `overflow` — the page scrolls sideways (catches e.g. `min-height` + `aspect-ratio` back-computing a width too wide for its grid track). Elements clipped by a *scoped* `overflow-x: clip` ancestor are treated as intentional bleed and ignored; clipping on `body` never counts
 - `hero_fold` — anything inside the hero `<section>` extending past the fold
 - `broken_images` — an `<img>` that loaded with `naturalWidth 0` (bad path)
 - `zero_size_images` / `image_gap` — an image collapsed to ~0px, or one told to fill its cell (`object-fit: cover`) leaving a vertical gap (the classic `<picture>` not carrying a stretched grid row's height)
@@ -123,6 +138,15 @@ Every build ships `public/contact.html` (same theme; also lists their phone/SMS/
 </form>
 ```
 AJAX submit (fetch + FormData, `Accept: application/json`) with inline status: success → hide the fields, flip the button to a disabled "Sent!" (restyle in place — `[hidden]` loses to any class that sets `display`; never `cursor:wait`); error → re-enable + "call/text <phone>" fallback. No-JS still POSTs to Web3Forms' hosted success page.
+
+**On success, freeze the height BEFORE hiding the fields, then scroll the confirmation into view.** Collapsing the fields shortens the document by ~500–600px; the browser does *not* compensate (scroll anchoring only covers DOM changes **above** the viewport), so everything below slides up under a stationary viewport and the user is dumped somewhere they never asked to be — they never see the "sent" message. Both of these are required:
+```js
+form.style.minHeight = form.getBoundingClientRect().height + 'px';  // page stops moving
+/* ...hide fields, flip button, render the status... */
+var still = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+status.scrollIntoView({ block: 'center', behavior: still ? 'auto' : 'smooth' });
+```
+§2d-pre's `document_collapse` check submits the form in a real browser and fails the build if you skip this.
 
 **Funnel every primary call/contact CTA to the form**: the nav's red button (label "Free Estimate"), the hero's primary button, the CTA-band's lead button, and service-card/price-note estimate buttons all link `contact.html#estimate` — phone/SMS stay visible but secondary. Leads through the form are what wow the client. (A real booking system still wins for booking CTAs — see §2.)
 

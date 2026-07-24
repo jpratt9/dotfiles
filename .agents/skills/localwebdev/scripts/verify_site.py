@@ -305,16 +305,31 @@ PROBE_JS = r"""
 
   const out = { viewport: { w: vw, h: vh }, failures: {} };
 
-  // 1. horizontal overflow
-  if (de.scrollWidth > vw + TOL) {
-    const wide = [...document.querySelectorAll('body *')].filter(e => {
-      const r = e.getBoundingClientRect();
-      return r.width > 0 && (r.right > vw + TOL || r.left < -TOL);
-    }).map(e => {
-      const r = e.getBoundingClientRect();
-      return { el: name(e), left: Math.round(r.left), right: Math.round(r.right),
-               width: Math.round(r.width) };
-    });
+  // 1. horizontal overflow. The element scan runs UNCONDITIONALLY — gating it
+  // behind scrollWidth > vw misses everything when a page sets
+  // `overflow-x: hidden` on body, which clips the overflow (hiding the symptom)
+  // without fixing it.
+  // An element that bleeds past the viewport but is CLIPPED by a scoped ancestor
+  // (e.g. a decorative ring inside `overflow-x: clip` on the hero) causes no
+  // scrolling and no cut-off content — that's intentional bleed, not a bug.
+  // body/html are excluded on purpose: clipping there is the global mask that
+  // hides real overflow instead of fixing it.
+  const contained = e => {
+    for (let p = e.parentElement; p && p !== document.body; p = p.parentElement) {
+      const ox = getComputedStyle(p).overflowX;
+      if (ox === 'hidden' || ox === 'clip' || ox === 'auto' || ox === 'scroll') return true;
+    }
+    return false;
+  };
+  const wide = [...document.querySelectorAll('body *')].filter(e => {
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && (r.right > vw + TOL || r.left < -TOL) && !contained(e);
+  }).map(e => {
+    const r = e.getBoundingClientRect();
+    return { el: name(e), left: Math.round(r.left), right: Math.round(r.right),
+             width: Math.round(r.width) };
+  });
+  if (wide.length || de.scrollWidth > vw + TOL) {
     out.failures.overflow = { scrollWidth: de.scrollWidth, clientWidth: vw,
                               elements: wide.slice(0, 15) };
   }
@@ -392,6 +407,214 @@ PROBE_JS = r"""
 """
 
 
+# Installed BEFORE any page script runs, so a verification submit never reaches
+# FormBackend/Web3Forms and never creates a junk lead.
+FETCH_STUB = r"""
+window.__verifySubmitted = false;
+const __realFetch = window.fetch;
+window.fetch = function (url, opts) {
+  const u = String(url || '');
+  if (/formbackend|web3forms|formspree|api\./i.test(u)) {
+    window.__verifySubmitted = true;
+    return Promise.resolve(new Response('{"success":true}', {
+      status: 200, headers: { 'Content-Type': 'application/json' } }));
+  }
+  return __realFetch.apply(this, arguments);
+};
+"""
+
+# Fills the form, submits it, and reports where the user is left afterwards.
+SUBMIT_JS = r"""
+(async () => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const vis = e => {
+    const r = e.getBoundingClientRect(), c = getComputedStyle(e);
+    return r.width > 0 && r.height > 0 && c.display !== 'none' &&
+           c.visibility !== 'hidden' && parseFloat(c.opacity) > 0.01;
+  };
+  // Wait for load: script.js is deferred, and submitting before its handler is
+  // attached triggers a native POST that navigates away and kills this context.
+  if (document.readyState !== 'complete') {
+    await new Promise(r => window.addEventListener('load', r, { once: true }));
+  }
+  await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
+
+  const form = document.querySelector('form');
+  if (!form) return JSON.stringify({ skipped: 'no form on this page' });
+
+  for (const el of form.querySelectorAll('input, textarea')) {
+    if (['hidden', 'checkbox', 'radio', 'submit', 'button'].includes(el.type)) continue;
+    el.value = el.type === 'email' ? 'verify@example.com'
+             : el.type === 'tel' ? '5555550142'
+             : el.tagName === 'TEXTAREA' ? 'Automated build verification — please ignore.'
+             : 'Build Verification';
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+
+  // Reproduce what a real user does: they fill top-to-bottom and tap the submit
+  // button, so the button is what they're looking at. Park it near the bottom of
+  // the viewport. Testing from scroll 0 hides the entire bug class.
+  const btn = form.querySelector('[type="submit"], button');
+  if (btn) { btn.scrollIntoView({ block: 'end' }); await sleep(300); }
+
+  const scrollBefore = window.scrollY;
+  const heightBefore = document.documentElement.scrollHeight;
+  // Where the thing they just tapped sits in the viewport, before submitting.
+  const anchorBefore = btn ? btn.getBoundingClientRect().top : null;
+  if (form.requestSubmit) form.requestSubmit();
+  else form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+
+  // wait for a visible status/confirmation
+  let status = null;
+  for (let i = 0; i < 60 && !status; i++) {
+    await sleep(100);
+    status = [...form.querySelectorAll('.form-status, [role="status"], [aria-live]')].find(vis);
+  }
+  await sleep(400);   // let any scroll settle
+
+  const out = {
+    submitted: !!window.__verifySubmitted,
+    scrollBefore, scrollAfter: window.scrollY,
+    heightBefore, heightAfter: document.documentElement.scrollHeight,
+    failures: {},
+  };
+  if (!status) {
+    out.failures.no_confirmation = 'form submitted but no visible status element appeared';
+    return JSON.stringify(out);
+  }
+
+  const vh = document.documentElement.clientHeight;
+  const r = status.getBoundingClientRect();
+  out.status = { top: Math.round(r.top), bottom: Math.round(r.bottom), viewportH: vh };
+
+  // THE check: the control the user just tapped must not jump under them.
+  // Collapsing the fields shortens the form, yanks the button upward, and fills
+  // the screen with whatever was below — the "it teleported me" bug.
+  // Movement caused by an INTENTIONAL scroll (scrollIntoView on the
+  // confirmation) is fine — that's the fix, not the bug. Subtract it out and
+  // judge only the movement the page inflicted on a stationary viewport.
+  if (anchorBefore !== null && btn.isConnected) {
+    const scrollDelta = window.scrollY - scrollBefore;
+    const moved = btn.getBoundingClientRect().top - anchorBefore;
+    const reflow = moved + scrollDelta;
+    out.anchorShift = Math.round(moved);
+    out.scrollDelta = Math.round(scrollDelta);
+    out.reflowShift = Math.round(reflow);
+  }
+
+  // THE defect: the document changing height on submit. Collapsing the fields
+  // shortens the page, so everything below slides up under a stationary
+  // viewport and the user is dumped somewhere they didn't ask to be. Where the
+  // button ends up doesn't matter once the confirmation is deliberately scrolled
+  // into view — the page not moving underneath them does.
+  const heightDelta = out.heightAfter - out.heightBefore;
+  if (Math.abs(heightDelta) > 100) {
+    out.failures.document_collapse = {
+      heightDelta,
+      note: 'the page changed height on submit, yanking content under the user; '
+            + 'freeze the form height (min-height = its rendered height) before '
+            + 'hiding the fields, then scrollIntoView the confirmation',
+    };
+  }
+
+  // the confirmation must actually be on screen after submitting
+  if (r.bottom < 0 || r.top > vh) {
+    out.failures.confirmation_offscreen = {
+      top: Math.round(r.top), viewportH: vh,
+      note: 'user was left looking at a different part of the page',
+    };
+  }
+
+  // ...and not tucked under a sticky/fixed header
+  const header = [...document.querySelectorAll('header, nav, .nav')].find(e => {
+    const p = getComputedStyle(e).position;
+    return (p === 'sticky' || p === 'fixed') && vis(e);
+  });
+  if (header) {
+    const hb = header.getBoundingClientRect().bottom;
+    if (r.top < hb - 1 && r.bottom > 0) {
+      out.failures.confirmation_under_header = {
+        statusTop: Math.round(r.top), headerBottom: Math.round(hb),
+        note: 'add scroll-padding-top / scroll-margin-top for the sticky header',
+      };
+    }
+  }
+  return JSON.stringify(out);
+})()
+"""
+
+
+def check_form_submit(chrome, url, width, height):
+    """Submit the page's form with fetch stubbed out, then report where the user
+    is left. Returns None when the page has no form."""
+    chrome.call("Emulation.setDeviceMetricsOverride", {
+        "width": width, "height": height, "deviceScaleFactor": 1, "mobile": width < 768,
+    })
+    chrome.call("Page.enable")
+    chrome.call("Page.addScriptToEvaluateOnNewDocument", {"source": FETCH_STUB})
+    chrome.call("Page.navigate", {"url": url})
+    try:
+        res = chrome.call("Runtime.evaluate", {
+            "expression": SUBMIT_JS, "awaitPromise": True, "returnByValue": True,
+        }, timeout=90)
+    except RuntimeError as e:
+        # The execution context died because the form did a real, native POST
+        # instead of an AJAX submit — a genuine defect for these builds, not a
+        # harness failure.
+        if "navigated" in str(e) or "context" in str(e).lower():
+            return {"viewport": {"w": width, "h": height}, "form": True,
+                    "failures": {"native_navigation":
+                                 "form performed a full-page POST instead of "
+                                 "submitting via fetch — the inline confirmation "
+                                 "never shows"}}
+        raise
+    raw = res.get("result", {}).get("value")
+    if raw is None:
+        raise RuntimeError("form probe returned nothing")
+    report = json.loads(raw)
+    if report.get("skipped"):
+        return None
+    report["viewport"] = {"w": width, "h": height}
+    return report
+
+
+def static_checks(public_dir):
+    """Cheap markup/CSS invariants that need no layout engine. Returns a dict of
+    failures (empty when clean)."""
+    fails = {}
+    css_path = os.path.join(public_dir, "styles.css")
+    if not os.path.exists(css_path):
+        return fails
+    try:
+        css = open(css_path, encoding="utf-8", errors="replace").read()
+    except OSError:
+        return fails
+
+    import re as _re
+    # Strip comments first — otherwise a comment *explaining* that a property was
+    # deliberately omitted reads as the property being present.
+    css = _re.sub(r"/\*.*?\*/", "", css, flags=_re.S)
+
+    sticky = _re.search(r"position:\s*(sticky|fixed)", css)
+    if sticky and "scroll-padding-top" not in css:
+        fails["missing_scroll_padding"] = (
+            "a sticky/fixed header exists but html has no scroll-padding-top — "
+            "anchors and scrollIntoView will land under it"
+        )
+    if _re.search(r"body\s*\{[^}]*overflow-x:\s*hidden", css, _re.S):
+        fails["overflow_x_hidden"] = (
+            "body sets overflow-x:hidden — that hides horizontal overflow "
+            "instead of fixing it; remove it and fix the real cause"
+        )
+    if "min-width: 0" not in css and "min-width:0" not in css:
+        fails["no_min_width_reset"] = (
+            "no `min-width: 0` reset — flex/grid children default to "
+            "min-width:auto and refuse to shrink, the top cause of blowouts"
+        )
+    return fails
+
+
 def parse_viewport(text):
     try:
         w, h = text.lower().split("x", 1)
@@ -425,9 +648,10 @@ def check_page(chrome, url, width, height, shot_path=None):
     return report
 
 
-def summarize(reports):
-    """(ok, total_failure_count) across every viewport's report."""
+def summarize(reports, static_fails=None):
+    """(ok, total_failure_count) across every viewport's report plus statics."""
     n = sum(len(r.get("failures", {})) for r in reports)
+    n += len(static_fails or {})
     return n == 0, n
 
 
@@ -438,7 +662,8 @@ def render(reports):
         vp = r["viewport"]
         fails = r.get("failures", {})
         tag = "OK  " if not fails else "FAIL"
-        lines.append(f"{tag} {vp['w']}x{vp['h']}"
+        label = f"{vp['w']}x{vp['h']}" + (" submit" if r.get("form") else "")
+        lines.append(f"{tag} {label}"
                      + ("" if not fails else f"  ({', '.join(sorted(fails))})"))
         for kind, detail in sorted(fails.items()):
             items = detail.get("elements", detail) if isinstance(detail, dict) else detail
@@ -455,6 +680,10 @@ def main(argv=None):
                     help=f"repeatable; default {' '.join(DEFAULT_VIEWPORTS)}")
     ap.add_argument("--shot", help="save a PNG of the LAST viewport here")
     ap.add_argument("--json", action="store_true", help="emit the raw report as JSON")
+    ap.add_argument("--no-form", action="store_true",
+                    help="skip the submit-the-form check")
+    ap.add_argument("--no-static", action="store_true",
+                    help="skip the static CSS invariant checks")
     args = ap.parse_args(argv)
 
     page = os.path.join(os.path.expanduser(args.dir), "public", args.page)
@@ -485,18 +714,31 @@ def main(argv=None):
                 last = i == len(viewports) - 1
                 reports.append(check_page(chrome, url, w, h,
                                           args.shot if (last and args.shot) else None))
+            if not args.no_form:
+                # narrowest viewport — where a post-submit scroll jump actually bites
+                w, h = min(viewports, key=lambda v: v[0])
+                form_report = check_form_submit(chrome, url, w, h)
+                if form_report is not None:
+                    form_report["form"] = True
+                    reports.append(form_report)
         except Exception as e:
             log(f"verification aborted: {e}")
             return 4
         finally:
             chrome.close()
 
-    ok, n = summarize(reports)
+    static_fails = {} if args.no_static else static_checks(
+        os.path.join(os.path.expanduser(args.dir), "public"))
+
+    ok, n = summarize(reports, static_fails)
     if args.json:
-        print(json.dumps({"page": args.page, "ok": ok, "reports": reports}, indent=1))
+        print(json.dumps({"page": args.page, "ok": ok, "static": static_fails,
+                          "reports": reports}, indent=1))
     else:
         for line in render(reports):
             print(line, file=sys.stderr)
+        for kind, detail in sorted(static_fails.items()):
+            print(f"FAIL static  {kind}: {detail}", file=sys.stderr)
     log(f"{args.page}: {'all checks passed' if ok else f'{n} check(s) failed'}")
     return 0 if ok else 1
 

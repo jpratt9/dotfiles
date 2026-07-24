@@ -166,6 +166,136 @@ class SummarizeTests(unittest.TestCase):
         self.assertIn("hero_fold", joined)
 
 
+class StaticCheckTests(unittest.TestCase):
+    def _css(self, body):
+        d = tempfile.mkdtemp()
+        with open(os.path.join(d, "styles.css"), "w") as f:
+            f.write(body)
+        return d
+
+    def test_no_css_file_is_not_a_failure(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertEqual(vs.static_checks(d), {})
+
+    def test_clean_css_passes(self):
+        d = self._css("*{min-width:0}\nhtml{scroll-padding-top:4rem}\n.nav{position:sticky}")
+        self.assertEqual(vs.static_checks(d), {})
+
+    def test_flags_sticky_without_scroll_padding(self):
+        d = self._css("*{min-width:0}\n.nav{position:sticky;top:0}")
+        self.assertIn("missing_scroll_padding", vs.static_checks(d))
+
+    def test_flags_body_overflow_x_hidden(self):
+        d = self._css("*{min-width:0}\nbody{margin:0;overflow-x:hidden}")
+        self.assertIn("overflow_x_hidden", vs.static_checks(d))
+
+    def test_flags_missing_min_width_reset(self):
+        d = self._css("body{margin:0}")
+        self.assertIn("no_min_width_reset", vs.static_checks(d))
+
+    def test_comments_are_stripped_before_matching(self):
+        """Regression: a comment explaining that a property was deliberately
+        omitted must not read as the property being present."""
+        d = self._css(
+            "*{min-width:0}\nhtml{scroll-padding-top:4rem}\n"
+            "body{margin:0; /* NOTE: no overflow-x: hidden here on purpose */}")
+        self.assertNotIn("overflow_x_hidden", vs.static_checks(d))
+
+
+class SummarizeStaticTests(unittest.TestCase):
+    def test_static_failures_count_toward_the_verdict(self):
+        reports = [{"viewport": {"w": 390, "h": 844}, "failures": {}}]
+        self.assertEqual(vs.summarize(reports, {}), (True, 0))
+        ok, n = vs.summarize(reports, {"overflow_x_hidden": "..."})
+        self.assertFalse(ok)
+        self.assertEqual(n, 1)
+
+
+class SubmitProbeTests(unittest.TestCase):
+    """Contract guards on the submit probe."""
+
+    def test_never_posts_to_a_real_form_backend(self):
+        self.assertIn("formbackend", vs.FETCH_STUB)
+        self.assertIn("web3forms", vs.FETCH_STUB)
+        self.assertIn("__verifySubmitted", vs.FETCH_STUB)
+
+    def test_waits_for_load_before_submitting(self):
+        """Submitting before the deferred handler attaches causes a native POST
+        that navigates away and kills the execution context."""
+        self.assertIn("readyState !== 'complete'", vs.SUBMIT_JS)
+
+    def test_scrolls_to_the_button_first(self):
+        """Testing from scroll 0 hides the whole bug class."""
+        self.assertIn("scrollIntoView({ block: 'end' })", vs.SUBMIT_JS)
+
+    def test_fails_on_document_height_change(self):
+        self.assertIn("document_collapse", vs.SUBMIT_JS)
+        self.assertIn("Math.abs(heightDelta) > 100", vs.SUBMIT_JS)
+
+    def test_checks_confirmation_visibility_and_header(self):
+        self.assertIn("confirmation_offscreen", vs.SUBMIT_JS)
+        self.assertIn("confirmation_under_header", vs.SUBMIT_JS)
+
+    def test_overflow_scan_is_ungated(self):
+        """The element scan must not sit behind `if (scrollWidth > vw)` — that
+        misses everything when body clips overflow."""
+        self.assertIn("if (wide.length || de.scrollWidth > vw + TOL)", vs.PROBE_JS)
+
+    def test_scoped_clipping_counts_but_body_does_not(self):
+        self.assertIn("p !== document.body", vs.PROBE_JS)
+        self.assertIn("!contained(e)", vs.PROBE_JS)
+
+
+class CheckFormSubmitTests(unittest.TestCase):
+    def _chrome(self, payload):
+        chrome = mock.Mock()
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                return {"result": {"value": json.dumps(payload)}}
+            return {}
+
+        chrome.call.side_effect = call
+        return chrome
+
+    def test_installs_the_fetch_stub_before_navigating(self):
+        chrome = self._chrome({"failures": {}})
+        vs.check_form_submit(chrome, "file:///x.html", 390, 844)
+        methods = [c[0][0] for c in chrome.call.call_args_list]
+        self.assertIn("Page.addScriptToEvaluateOnNewDocument", methods)
+        self.assertLess(methods.index("Page.addScriptToEvaluateOnNewDocument"),
+                        methods.index("Page.navigate"),
+                        "the stub must be installed before the page loads")
+
+    def test_returns_none_when_page_has_no_form(self):
+        chrome = self._chrome({"skipped": "no form on this page"})
+        self.assertIsNone(vs.check_form_submit(chrome, "file:///x.html", 390, 844))
+
+    def test_navigation_error_becomes_a_reported_failure(self):
+        chrome = mock.Mock()
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                raise RuntimeError("Runtime.evaluate: Inspected target navigated or closed")
+            return {}
+
+        chrome.call.side_effect = call
+        report = vs.check_form_submit(chrome, "file:///x.html", 390, 844)
+        self.assertIn("native_navigation", report["failures"])
+
+    def test_other_errors_still_raise(self):
+        chrome = mock.Mock()
+
+        def call(method, params=None, timeout=60):
+            if method == "Runtime.evaluate":
+                raise RuntimeError("something else entirely")
+            return {}
+
+        chrome.call.side_effect = call
+        with self.assertRaises(RuntimeError):
+            vs.check_form_submit(chrome, "file:///x.html", 390, 844)
+
+
 class ProbeSourceTests(unittest.TestCase):
     """The probe is a string, so guard its contract here."""
 
@@ -318,8 +448,58 @@ class MainTests(unittest.TestCase):
         try:
             with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
                  mock.patch.object(vs, "Chrome", return_value=chrome), \
-                 mock.patch.object(vs, "check_page", return_value=report):
+                 mock.patch.object(vs, "check_page", return_value=report), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}):
                 return vs.main(["--dir", d] + argv), chrome
+        finally:
+            __import__("shutil").rmtree(d)
+
+    def test_form_check_runs_by_default_and_can_be_skipped(self):
+        d = make_project()
+        try:
+            for argv, want in ([], True), (["--no-form"], False):
+                with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                     mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                     mock.patch.object(vs, "check_page",
+                                       return_value={"viewport": {"w": 390, "h": 844},
+                                                     "failures": {}}), \
+                     mock.patch.object(vs, "static_checks", return_value={}), \
+                     mock.patch.object(vs, "check_form_submit",
+                                       return_value=None) as form:
+                    vs.main(["--dir", d, "--viewport", "390x844"] + argv)
+                self.assertEqual(form.called, want)
+        finally:
+            __import__("shutil").rmtree(d)
+
+    def test_form_failure_fails_the_build(self):
+        d = make_project()
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_page",
+                                   return_value={"viewport": {"w": 390, "h": 844},
+                                                 "failures": {}}), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
+                 mock.patch.object(vs, "check_form_submit",
+                                   return_value={"viewport": {"w": 390, "h": 844},
+                                                 "failures": {"document_collapse": {}}}):
+                self.assertEqual(vs.main(["--dir", d, "--viewport", "390x844"]), 1)
+        finally:
+            __import__("shutil").rmtree(d)
+
+    def test_static_failure_alone_fails_the_build(self):
+        d = make_project()
+        try:
+            with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
+                 mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_page",
+                                   return_value={"viewport": {"w": 390, "h": 844},
+                                                 "failures": {}}), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks",
+                                   return_value={"overflow_x_hidden": "..."}):
+                self.assertEqual(vs.main(["--dir", d, "--viewport", "390x844"]), 1)
         finally:
             __import__("shutil").rmtree(d)
 
@@ -350,6 +530,8 @@ class MainTests(unittest.TestCase):
         try:
             with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
                  mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
                  mock.patch.object(vs, "check_page",
                                    side_effect=lambda c, u, w, h, shot_path=None: (
                                        seen.append((w, h)) or
@@ -366,6 +548,8 @@ class MainTests(unittest.TestCase):
         try:
             with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
                  mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
                  mock.patch.object(vs, "check_page",
                                    return_value={"viewport": {"w": 390, "h": 844},
                                                  "failures": {}}), \
@@ -385,6 +569,8 @@ class MainTests(unittest.TestCase):
         try:
             with mock.patch.object(vs, "find_chrome", return_value="/bin/chrome"), \
                  mock.patch.object(vs, "Chrome", return_value=mock.Mock()), \
+                 mock.patch.object(vs, "check_form_submit", return_value=None), \
+                 mock.patch.object(vs, "static_checks", return_value={}), \
                  mock.patch.object(vs, "check_page",
                                    side_effect=lambda c, u, w, h, shot_path=None: (
                                        urls.append(u) or
