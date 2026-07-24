@@ -45,15 +45,7 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
   - **Scale hero type + spacing to the CONTAINER with `cqi`, not only the viewport** — this is what guarantees nothing clips on mobile. Put `container-type: inline-size` on the `.hero` (or a wrapper), then size the headline, subcopy, gaps and padding in container-inline units, e.g. `font-size: clamp(1.75rem, 9cqi, 5rem)`. Since `cqi` = 1% of the hero's own width, the headline scales down proportionally on a narrow phone (can't overflow horizontally, and its smaller height helps the block clear the fold), while the `clamp()` max still caps it on desktop. Note: an element can't query its own container — set `container-type` on the ancestor and size the children in `cqi`. Pair this with the `svh`/`dvh` sizing above (cqi handles width-proportional fit, svh/dvh handles vertical fit).
   - On mobile, if a hero side-card can't fit alongside everything, let it reflow below and shrink the headline so the core (headline + CTA + proof) still fits one screen; heavy secondary content may move just below the fold, but the primary CTA and proof never do.
   - **Verify before shipping:** don't eyeball this — run `scripts/verify_site.py` (§2e). It asserts the fold and overflow geometry at a true 390×844 and 1440×900 and exits non-zero with the offending elements named. Tighten the `clamp()` maxes/gaps until it passes. Same discipline for any other section meant to read as a single screen.
-- **Ship this defensive-CSS preamble in every `styles.css`.** It removes whole classes of mobile-overflow bug structurally, instead of leaving them to be found later:
-  ```css
-  *, *::before, *::after { box-sizing: border-box; min-width: 0; }
-  html { scroll-padding-top: calc(var(--nav-h) + 1rem); }
-  img, svg, video, iframe, canvas, table { display: block; max-width: 100%; }
-  p, li, h1, h2, h3, h4, blockquote, td, dd, dt { overflow-wrap: anywhere; }
-  ```
-  `min-width: 0` is the load-bearing line — flex/grid children default to `min-width: auto` (= min-content) and *refuse to shrink*, which is the single most common cause of a blown-out track. `scroll-padding-top` stops anchors and `scrollIntoView` landing under the sticky nav. `overflow-wrap` stops a long phone number or URL forcing a wide box.
-- **Never put `overflow-x: hidden` on `body`.** It hides horizontal overflow instead of fixing it and masks real bugs (it will also make a mobile screenshot look clipped rather than scrollable). When an element bleeds off-screen *on purpose* (a decorative ring, a rotated card), scope the containment to that element's own section with `overflow-x: clip` — §2d-pre understands scoped containment and won't flag it.
+- Don't hand-write a defensive CSS base — `harden_css.py` (§2b) injects it and strips `overflow-x: hidden` off `body` for you. Just don't fight it: when an element bleeds off-screen *on purpose* (a decorative ring, a rotated card), scope the containment to that element's own section with `overflow-x: clip`, which §2d-pre recognises as intentional.
 - Responsive, reduced-motion safe, scroll-reveal (**below the fold only** — never put the reveal/entrance-animation class on the hero or header: an `opacity:0` LCP element can't paint until JS runs, which wrecks mobile LCP; §2b auto-strips it as a safety net), mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
@@ -100,6 +92,12 @@ The scroll-reveal system parks elements at `opacity: 0` until main.js reveals th
 python3 <skill-dir>/scripts/lcp_guard.py --html ~/dev/<slug>/public/index.html --css ~/dev/<slug>/public/styles.css
 ```
 It auto-detects the classes your CSS parks at `opacity:0` with a transition/animation and strips them off every element up to the end of the hero `<section>` so the first screen paints immediately; below-the-fold reveals stay. Stdlib-only, idempotent — run it on every build.
+
+Then harden the stylesheet — same deal, run it on every build, once per page's CSS:
+```
+python3 <skill-dir>/scripts/harden_css.py --css ~/dev/<slug>/public/styles.css
+```
+It injects the defensive base (`min-width: 0` on everything, `scroll-padding-top` for the sticky nav, `max-width: 100%` on replaced elements, `overflow-wrap: anywhere` on text) and strips `overflow-x: hidden` off any `body` rule. `min-width: 0` is the load-bearing one: flex/grid children default to `min-width: auto` (= min-content) and *refuse to shrink*, the single most common cause of a blown-out track. The block is inserted after any `@charset`/`@import` but before your rules, so your own CSS still overrides it. Stdlib-only and idempotent.
 
 ## 2d-pre. Verify the build (automatic — it's part of deploy.sh)
 **`deploy.sh` verifies every page in `public/` before it uploads anything** (§3 wires this in), so a normal `./deploy.sh` covers it and there is no separate command to remember. To check without deploying while you're still iterating:
