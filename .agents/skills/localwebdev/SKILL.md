@@ -1,7 +1,7 @@
 ---
 name: localwebdev
-description: Take an existing local business (a URL + pasted text/Google reviews) and spin up a sleek 2026 semi-premium "revamp" static site for it, then deploy it to a brand-new Cloudflare Pages project with wrangler Direct Upload. Use when John says /localwebdev or wants to build+deploy a client demo site from a business URL.
-argument-hint: "<business-url> — <notes, google reviews, or existing site copy>"
+description: Take an existing local business (a website URL or a Facebook Page/profile link, plus pasted text/Google reviews) and spin up a sleek 2026 semi-premium "revamp" static site for it, then deploy it to a brand-new Cloudflare Pages project with wrangler Direct Upload. Use when John says /localwebdev or wants to build+deploy a client demo site from a business URL.
+argument-hint: "<business-url OR facebook page/profile link> — <notes, google reviews, or existing site copy>"
 allowed-tools: Agent, Bash, Write, Edit, Read, WebFetch
 ---
 
@@ -21,15 +21,16 @@ Spawn ONE agent (general-purpose) to extract the real brand + business facts. Do
 - **Copy/tagline** and any real **reviews** (with names) for social proof.
 - **Booking system** + the direct public booking URL.
 - **Google Maps place URL** for the business — needed for the default photo pull (§2a). Their reviews almost always come from Google Maps, so this is usually available; capture the listing/place URL if findable.
+- **Facebook Page/profile URL** — if John hands you one as the input (common for prospects found in FB groups) or the business links one. This is the photo source **in place of** Google (§2a-fb) when there's no usable Maps URL, or whenever John gives you the FB link directly.
 
-The browser extension is often not connected — that's fine; the agent should pull from the site HTML, embedded bootstrap/config JSON, and the booking platform's JSON API instead.
+The browser extension is often not connected — that's fine; the agent should pull from the site HTML, embedded bootstrap/config JSON, and the booking platform's JSON API instead. If the business's only real presence is a **Facebook Page/profile** (no standalone site — common for FB-group prospects), pull the brand facts from the Facebook page itself: profile pic as the logo, cover image, the About/Info section (phone, address, hours, services), and recent posts for copy/reviews. The photos then come from §2a-fb.
 
 Wait for the agent, then work from its verified data. Copy the logo(s) into `public/assets/`.
 
 ## 2. Build the site (webdesign principles)
 Create the working dir at `~/dev/<slug>/` with the site in `public/`:
 ```
-public/index.html   public/styles.css   public/script.js   public/assets/<logos>
+public/index.html   public/contact.html   public/styles.css   public/script.js   public/assets/<logos>
 ```
 Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they can charge more — elevate, don't just modernize. Concretely:
 - **Keep their real logo.** Build the palette + type up from their actual brand (don't invent a new identity), but refine it (muted/elevated versions of their colors, a distinctive display + body font pairing — never Inter/Arial/Roboto).
@@ -37,7 +38,7 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
 - **Pull their real Google photos by default (§2a) and build a gallery from them.** Never invent or fake photos. Only when the photo pull yields nothing (no token, no Maps URL, or none returned) fall back to a type-led, photo-light layout — lean on typography, color, texture (CSS grain/gradient-mesh), and the real logo, leaving a clearly-commented gallery section ready for their Instagram shots.
 - **Use real content only**: real services (bilingual if they are), real hours, real reviews (lightly trimmed for length is fine), real contact info, real booking link. Frame "price varies" services as a bespoke/consultation menu — that supports the premium tier.
 - **Real SEO in `<head>`** (reads as a pro build, helps them rank): accurate `<title>` + meta description, Open Graph + Twitter-card tags, and a JSON-LD `LocalBusiness` schema (name, telephone, email, `areaServed`, `founder`, and a `hasOfferCatalog` of their services) — all populated from the §1 data.
-- Single page, sections roughly: sticky nav + Book CTA → hero (bold statement, rating proof) → services menu → social proof/stats → real reviews → visit (hours/address/map/seal) → final CTA → footer. Booking buttons all point to their existing booking URL (no backend).
+- Single page, sections roughly: sticky nav + Book CTA → hero (bold statement, rating proof) → services menu → social proof/stats → real reviews → visit (hours/address/map/seal) → final CTA → footer. Booking buttons all point to their existing booking URL (no backend). The nav ALWAYS also includes a **Contact** link to `contact.html` (§2c) — every build ships that page.
 - **First viewport must be COMPLETE — nothing clipped.** Everything that logically belongs on the opening screen (headline, subcopy, both primary CTAs, the rating/proof line, and any hero side-card like a signature-item/price panel) must be fully visible within the initial viewport on BOTH desktop and mobile — never bleeding past the bottom edge (the #1 recurring failure: the star rating / proof line half-cut at the fold). To guarantee it:
   - Size the hero to the real viewport: `min-height: 100svh` and account for the sticky nav (e.g. `min-height: calc(100svh - var(--nav-h))`). Use `svh`/`dvh`, **never `vh`** — `vh` ignores mobile browser chrome and causes exactly this overflow.
   - Make the hero a flex column that fits its box (`justify-content: center`, controlled `gap`), and cap the display font + vertical rhythm with `clamp()` whose **max is tuned so the CTA row and proof line still clear the fold** — headlines shrink on short/mobile viewports rather than pushing content off-screen.
@@ -49,6 +50,8 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
 
 ## 2a. Google Business Profile photos (ON by default)
+**Photo source — pick one:** Google Business Profile (§2a, the default) *or* the business's Facebook Page/profile (§2a-fb). Use Facebook **in place of** Google whenever John gives you a Facebook page/profile link as the input, or there's no usable Google Maps URL — both produce the same `gallery.json`, so the gallery build below is identical either way.
+
 Pull the business's real Google photos **by default** on every run — do it whenever a **Google Maps place URL** is available (from §1) and the Apify token is set. Skip only if John explicitly says to leave photos out, there's no usable Maps URL, or the token isn't set. Cost is pennies per business (see below), so default to doing it.
 
 Needs John's Apify token. It lives in his macOS Keychain via envchain (namespace `apify`, var `APIFY_TOKEN`) — run the script under `envchain apify` and the token is injected; never pass it on the command line. If `envchain --list` doesn't show `apify`, tell him to run `envchain --set apify APIFY_TOKEN` and skip this step for now — do NOT block the build on it.
@@ -66,13 +69,13 @@ Then build the gallery **from `gallery.json`** — a responsive image grid in `i
 
 Note: these are public Google Maps photos — a mix of owner- and customer-posted (this actor doesn't reliably label which, so `--owner-only` is a no-op; skip it). That's fine for the client's own site. Just curate: use the good ones.
 
-## 2a-fb. Facebook Page photos (alternative / additional source)
-Many local businesses post far more real photos to their **Facebook Page** than to Google — and every Page post is the business's *own* content (genuine owner/brand shots, no customer noise). Use this when §1 turned up a **Facebook Page URL** and either the GBP pull yielded nothing (no Maps URL, no token, none returned) or you want more/better on-brand shots. It's the GBP sibling: same token, same output, same gallery build.
+## 2a-fb. Facebook Page/profile photos (photo source in place of GBP)
+Use this as the photo source **instead of §2a** whenever John hands you a **Facebook Page or profile link** (common for prospects found in FB groups — they often have an active Page but a weak or missing Google listing), or when the GBP pull yields nothing (no Maps URL, no token, none returned). You can also run it *in addition* to §2a for more/better shots. Many local businesses post far more real photos to Facebook than to Google, and every post is the business's *own* content (genuine owner/brand shots, no customer noise). It's the GBP sibling: same token, same output, same gallery build — so §2a's gallery wiring is unchanged.
 
 Same Apify token as §2a (envchain namespace `apify`, var `APIFY_TOKEN`). Run:
 ```
 envchain apify python3 <skill-dir>/scripts/fetch_fb_photos.py \
-  --url "<facebook page url>" \
+  --url "<facebook page or profile url>" \
   --out ~/dev/<slug>/public/assets/gallery \
   --max 12 --max-posts 25
 ```
@@ -88,6 +91,21 @@ The scroll-reveal system parks elements at `opacity: 0` until main.js reveals th
 python3 <skill-dir>/scripts/lcp_guard.py --html ~/dev/<slug>/public/index.html --css ~/dev/<slug>/public/styles.css
 ```
 It auto-detects the classes your CSS parks at `opacity:0` with a transition/animation and strips them off every element up to the end of the hero `<section>` so the first screen paints immediately; below-the-fold reveals stay. Stdlib-only, idempotent — run it on every build.
+
+## 2c. Contact page + estimate form (ALWAYS)
+Every build ships `public/contact.html` (same theme; also lists their phone/SMS/social links) with this form, restyled to the site's brand. Use the access key from `<skill-dir>/.env` (`WEB3FORMS_ACCESS_KEY`):
+```html
+<form id="estimate-form" action="https://api.web3forms.com/submit" method="POST">
+  <input type="hidden" name="access_key" value="<WEB3FORMS_ACCESS_KEY>">
+  <input type="hidden" name="subject" value="New estimate request — <Business> website">
+  <input type="hidden" name="from_name" value="<Business> Website">
+  <input type="checkbox" name="botcheck" class="sr-only" tabindex="-1" aria-hidden="true">
+  <!-- name (text) / phone (tel) / email / message — all required, labels in the trade's voice -->
+  <button type="submit">Request my free estimate</button>
+  <p class="form-status" hidden></p>
+</form>
+```
+AJAX submit (fetch + FormData, `Accept: application/json`) with inline status: success → hide the fields, flip the button to a disabled "Sent!" (restyle in place — `[hidden]` loses to any class that sets `display`; never `cursor:wait`); error → re-enable + "call/text <phone>" fallback. No-JS still POSTs to Web3Forms' hosted success page.
 
 ## 3. Wire up deploy tooling
 In `~/dev/<slug>/` write `package.json`:

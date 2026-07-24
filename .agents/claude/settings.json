@@ -1,4 +1,7 @@
 {
+  "env": {
+    "CLAUDE_CODE_EFFORT_LEVEL": "max"
+  },
   "permissions": {
     "defaultMode": "auto"
   },
@@ -24,11 +27,9 @@
   },
   "alwaysThinkingEnabled": true,
   "effortLevel": "high",
-  "env": {
-    "CLAUDE_CODE_EFFORT_LEVEL": "max"
-  },
   "skipDangerousModePermissionPrompt": true,
   "skipWorkflowUsageWarning": true,
   "verbose": true,
-  "skipAutoPermissionPrompt": true
+  "skipAutoPermissionPrompt": true,
+  "model": "claude-fable-5[1m]"
 }
