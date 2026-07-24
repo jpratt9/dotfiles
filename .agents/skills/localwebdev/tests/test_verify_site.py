@@ -173,6 +173,13 @@ class ProbeSourceTests(unittest.TestCase):
         self.assertIn("document.fonts.ready", vs.PROBE_JS)
         self.assertIn("i.onload = i.onerror = r", vs.PROBE_JS)
 
+    def test_every_wait_is_bounded(self):
+        """Regression: loading="lazy" images never fire load/error, so an
+        unbounded Promise.all on them hangs the probe forever."""
+        self.assertIn("Promise.race", vs.PROBE_JS)
+        self.assertIn("bounded(document.fonts.ready", vs.PROBE_JS)
+        self.assertIn("bounded(Promise.all(", vs.PROBE_JS)
+
     def test_checks_all_five_categories(self):
         for key in ("overflow", "hero_fold", "broken_images",
                     "zero_size_images", "hidden_hero"):
@@ -180,6 +187,19 @@ class ProbeSourceTests(unittest.TestCase):
 
     def test_returns_json_string(self):
         self.assertIn("JSON.stringify(out)", vs.PROBE_JS)
+
+    def test_hidden_hero_tests_duration_not_the_value(self):
+        """Regression: /transition/.test(c.transitionProperty) never matches —
+        the computed value reads e.g. "opacity" — which silently disabled the
+        check. Must test for a non-zero duration / named animation instead."""
+        self.assertIn("parseFloat(c.transitionDuration) > 0", vs.PROBE_JS)
+        self.assertIn("c.animationName !== 'none'", vs.PROBE_JS)
+        self.assertNotIn("/transition|animation/.test", vs.PROBE_JS)
+
+    def test_image_gap_ignores_the_css_initial_fill(self):
+        """object-fit:fill is the initial value; matching it would flag every
+        unstyled image on the page."""
+        self.assertIn("fit !== 'cover' && fit !== 'contain'", vs.PROBE_JS)
 
 
 # --------------------------------------------------------------------------

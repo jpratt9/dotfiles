@@ -44,7 +44,7 @@ Follow the `webdesign` skill for craft. Positioning is **semi-premium** so they 
   - Make the hero a flex column that fits its box (`justify-content: center`, controlled `gap`), and cap the display font + vertical rhythm with `clamp()` whose **max is tuned so the CTA row and proof line still clear the fold** — headlines shrink on short/mobile viewports rather than pushing content off-screen.
   - **Scale hero type + spacing to the CONTAINER with `cqi`, not only the viewport** — this is what guarantees nothing clips on mobile. Put `container-type: inline-size` on the `.hero` (or a wrapper), then size the headline, subcopy, gaps and padding in container-inline units, e.g. `font-size: clamp(1.75rem, 9cqi, 5rem)`. Since `cqi` = 1% of the hero's own width, the headline scales down proportionally on a narrow phone (can't overflow horizontally, and its smaller height helps the block clear the fold), while the `clamp()` max still caps it on desktop. Note: an element can't query its own container — set `container-type` on the ancestor and size the children in `cqi`. Pair this with the `svh`/`dvh` sizing above (cqi handles width-proportional fit, svh/dvh handles vertical fit).
   - On mobile, if a hero side-card can't fit alongside everything, let it reflow below and shrink the headline so the core (headline + CTA + proof) still fits one screen; heavy secondary content may move just below the fold, but the primary CTA and proof never do.
-  - **Verify before shipping:** check the rendered hero at 1440×900 (desktop) and 390×844 (mobile) and confirm the proof line and both CTAs are on-screen with no clipping; tighten the `clamp()` maxes/gaps until they are. Same discipline for any other section meant to read as a single screen.
+  - **Verify before shipping:** don't eyeball this — run `scripts/verify_site.py` (§2e). It asserts the fold and overflow geometry at a true 390×844 and 1440×900 and exits non-zero with the offending elements named. Tighten the `clamp()` maxes/gaps until it passes. Same discipline for any other section meant to read as a single screen.
 - Responsive, reduced-motion safe, scroll-reveal (**below the fold only** — never put the reveal/entrance-animation class on the hero or header: an `opacity:0` LCP element can't paint until JS runs, which wrecks mobile LCP; §2b auto-strips it as a safety net), mobile menu that's actually hidden until toggled (default `display:none`, not just the `hidden` attr — a class `display:flex` overrides `[hidden]`).
 
 No local dev server — it's self-contained (relative assets, CDN fonts). John opens `public/index.html` directly. See his preference on this.
@@ -91,6 +91,23 @@ The scroll-reveal system parks elements at `opacity: 0` until main.js reveals th
 python3 <skill-dir>/scripts/lcp_guard.py --html ~/dev/<slug>/public/index.html --css ~/dev/<slug>/public/styles.css
 ```
 It auto-detects the classes your CSS parks at `opacity:0` with a transition/animation and strips them off every element up to the end of the hero `<section>` so the first screen paints immediately; below-the-fold reveals stay. Stdlib-only, idempotent — run it on every build.
+
+## 2d-pre. Verify the build (ALWAYS — before deploying)
+Run this on **every page you ship** once `index.html`/`contact.html`/`styles.css` are written. It is the whole pre-deploy check; do NOT hand-roll a Chrome screenshot loop.
+```
+python3 <skill-dir>/scripts/verify_site.py --dir ~/dev/<slug>
+python3 <skill-dir>/scripts/verify_site.py --dir ~/dev/<slug> --page contact.html
+```
+~6s per viewport, three viewports by default (390×844, 768×1024, 1440×900). Exit `0` = ship it, `1` = a check failed (fix and re-run), `3` = bad args/page, `4` = Chrome unavailable (skip, don't block the build). Add `--shot out.png` for one PNG artifact, `--json` for the raw report, `--viewport WxH` (repeatable) to narrow it.
+
+It fails the build on, and names the exact elements causing:
+- `overflow` — the page scrolls sideways (catches e.g. `min-height` + `aspect-ratio` back-computing a width too wide for its grid track)
+- `hero_fold` — anything inside the hero `<section>` extending past the fold
+- `broken_images` — an `<img>` that loaded with `naturalWidth 0` (bad path)
+- `zero_size_images` / `image_gap` — an image collapsed to ~0px, or one told to fill its cell (`object-fit: cover`) leaving a vertical gap (the classic `<picture>` not carrying a stretched grid row's height)
+- `hidden_hero` — an above-the-fold element still parked at `opacity: 0` (backstop for §2b)
+
+**Why a script and not screenshots:** `chrome --headless --screenshot` routinely never exits, so each capture costs a subprocess timeout instead of ~2s; and `--window-size=390,844` does *not* give a 390px viewport — Chrome clamps windows to a ~500px minimum, so "mobile" screenshots silently render at 500px and hide real bugs. This drives Chrome over the DevTools Protocol and sets the viewport with `Emulation.setDeviceMetricsOverride`, so the numbers are real. Stdlib-only.
 
 ## 2c. Contact page + estimate form (ALWAYS)
 Every build ships `public/contact.html` (same theme; also lists their phone/SMS/social links) with this form, restyled to the site's brand. Use the access key from `<skill-dir>/.env` (`WEB3FORMS_ACCESS_KEY`):
@@ -153,6 +170,8 @@ Must be `--private`. `gh` must be authed (`gh auth status`; if not, `gh auth log
 
 ## 5. Hand off
 Give John the bare live URL on its own line (`https://<slug>.pages.dev`) — he asks for the link a lot, make it copy-pasteable. Then a tight recap: what shipped, `./deploy.sh` to update, and offer the two upsells (Instagram photo gallery; custom subdomain like `<slug>.yourstudio.dev`).
+
+**Lead with anything that blocks the site from working**, in the handoff itself — not buried in the README. Above all, the §2d FormBackend `blocking_dashboard_actions`: *notify owner on submission* is OFF by default, so until John flips it in the dashboard the estimate form silently stores leads and emails nobody. A demo whose form doesn't reach the client is worse than no form. Same for anything else the build couldn't finish (photo pull returned nothing, Turnstile secret unset, CRM exit non-zero).
 
 ## 6. Record the client in the CRM
 After the site is deployed and verified, add this business to the "Web Clients"

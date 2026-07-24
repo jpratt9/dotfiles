@@ -278,9 +278,16 @@ class Chrome:
 PROBE_JS = r"""
 (async () => {
   const TOL = 1.5;
-  if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
-  await Promise.all([...document.images].filter(i => !i.complete)
-    .map(i => new Promise(r => { i.onload = i.onerror = r; })));
+  // Every wait below is BOUNDED. loading="lazy" images below the fold never
+  // load and never fire load/error, so an unbounded Promise.all on them hangs
+  // forever; a webfont that 404s can wedge document.fonts.ready the same way.
+  const bounded = (p, ms) => Promise.race([p, new Promise(r => setTimeout(r, ms))]);
+
+  if (document.fonts && document.fonts.ready) {
+    try { await bounded(document.fonts.ready, 5000); } catch (e) {}
+  }
+  await bounded(Promise.all([...document.images].filter(i => !i.complete)
+    .map(i => new Promise(r => { i.onload = i.onerror = r; }))), 5000);
   await new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r)));
 
   const de = document.documentElement;
@@ -341,12 +348,41 @@ PROBE_JS = r"""
   if (broken.length) out.failures.broken_images = broken.slice(0, 15);
   if (zero.length) out.failures.zero_size_images = zero.slice(0, 15);
 
+  // 4b. an image told to fill its cell (object-fit: cover/contain) that leaves a
+  // vertical gap — e.g. <picture> not carrying a stretched grid row's height, so
+  // height:100% resolves against auto and the image sits short of its cell.
+  // Only `cover`/`contain` count: `fill` is the CSS initial value and would
+  // match every unstyled image on the page.
+  const gaps = [];
+  for (const img of document.images) {
+    if (!shown(img)) continue;
+    const fit = getComputedStyle(img).objectFit;
+    if (fit !== 'cover' && fit !== 'contain') continue;
+    let cell = img.parentElement;
+    while (cell && cell.parentElement && cell.parentElement !== document.body) {
+      const pd = getComputedStyle(cell.parentElement).display;
+      if (pd === 'grid' || pd === 'flex') break;
+      cell = cell.parentElement;
+    }
+    if (!cell) continue;
+    const r = img.getBoundingClientRect(), cr = cell.getBoundingClientRect();
+    const gap = cr.bottom - r.bottom;
+    if (cr.height > 0 && gap > 8) {
+      gaps.push({ el: name(img), cell: name(cell), imgH: Math.round(r.height),
+                  cellH: Math.round(cr.height), gap: Math.round(gap) });
+    }
+  }
+  if (gaps.length) out.failures.image_gap = gaps.slice(0, 15);
+
   // 5. above-the-fold element parked at opacity 0 (can't paint until JS runs)
   if (hero) {
     const dark = [...hero.querySelectorAll('*')].filter(e => {
       const c = getComputedStyle(e);
-      return parseFloat(c.opacity) < 0.01 && /transition|animation/.test(
-        c.transitionProperty + c.animationName);
+      if (parseFloat(c.opacity) >= 0.01) return false;
+      // "has an entrance animation" = a non-zero transition duration or a named
+      // animation. Testing the transition *value* for the word "transition"
+      // never matches (it reads e.g. "opacity"), which silently disabled this.
+      return parseFloat(c.transitionDuration) > 0 || c.animationName !== 'none';
     }).map(name);
     if (dark.length) out.failures.hidden_hero = dark.slice(0, 15);
   }
