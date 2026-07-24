@@ -17,6 +17,9 @@ import subprocess
 import sys
 import time
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import user_oauth
+
 KEY_DIR = os.path.expanduser("~/.config/gcp-keys")
 
 
@@ -56,6 +59,14 @@ API_SCOPES = {
     "slides": "https://www.googleapis.com/auth/presentations",
     "storage": "https://www.googleapis.com/auth/devstorage.read_write",
     "bigquery": "https://www.googleapis.com/auth/bigquery",
+}
+
+# APIs a service account cannot serve on a consumer account: the SA has no
+# mailbox of its own, and impersonating the user needs domain-wide delegation,
+# which only a Google Workspace admin can grant. These get user OAuth instead.
+USER_OAUTH_APIS = {"gmail"}
+USER_OAUTH_SCOPES = {
+    "gmail": "https://www.googleapis.com/auth/gmail.settings.basic",
 }
 
 # Regex patterns to extract resource IDs from Google URLs
@@ -816,6 +827,25 @@ def main():
                 personal_project_id, apis, shares
             )
 
+        # APIs that a service account cannot reach need a user token as well.
+        user_token = None
+        needs_user = sorted({a.strip().lower() for a in apis} & USER_OAUTH_APIS)
+        if needs_user:
+            try:
+                user_token = user_oauth.ensure_user_credentials(
+                    project_id, [USER_OAUTH_SCOPES[a] for a in needs_user]
+                )
+            except user_oauth.MissingClientSecret:
+                print(json.dumps({
+                    "project_id": project_id,
+                    "service_account_email": sa_email,
+                    "key_file": key_path,
+                    "apis_enabled": enabled,
+                    "user_oauth_required": needs_user,
+                    "next_step": user_oauth.instructions(project_id),
+                }, indent=2))
+                sys.exit(2)
+
         # Build scopes list for the usage snippet
         scopes = [API_SCOPES.get(a.strip().lower(), f"https://www.googleapis.com/auth/{a}")
                    for a in apis if a.strip().lower() in API_SCOPES]
@@ -828,6 +858,7 @@ def main():
             "key_file": key_path,
             "apis_enabled": enabled,
             "shared_resources": shared,
+            "user_token_file": user_token,
             "verified": True,
             "usage_snippet": (
                 "from google.oauth2.service_account import Credentials\n"

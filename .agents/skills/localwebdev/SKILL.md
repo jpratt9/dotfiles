@@ -107,6 +107,8 @@ Every build ships `public/contact.html` (same theme; also lists their phone/SMS/
 ```
 AJAX submit (fetch + FormData, `Accept: application/json`) with inline status: success → hide the fields, flip the button to a disabled "Sent!" (restyle in place — `[hidden]` loses to any class that sets `display`; never `cursor:wait`); error → re-enable + "call/text <phone>" fallback. No-JS still POSTs to Web3Forms' hosted success page.
 
+**Funnel every primary call/contact CTA to the form**: the nav's red button (label "Free Estimate"), the hero's primary button, the CTA-band's lead button, and service-card/price-note estimate buttons all link `contact.html#estimate` — phone/SMS stay visible but secondary. Leads through the form are what wow the client. (A real booking system still wins for booking CTAs — see §2.)
+
 ## 3. Wire up deploy tooling
 In `~/dev/<slug>/` write `package.json`:
 ```json
@@ -179,3 +181,10 @@ Stdlib-only; POSTs the live URL to John's Telegram. Exit 2 = creds not injected 
 - Keep the client's real logo; don't rebrand them.
 - Don't stand up a local http server; John opens the file directly.
 - The only `git` push is the §4 private-repo backup; don't commit/push anywhere else or delete infra.
+
+## 2d. FormBackend + Turnstile (preferred over Web3Forms when FORMBACKEND_TOKEN is set in `<skill-dir>/.env`)
+```
+python3 <skill-dir>/scripts/turnstile_widget.py --hostname <slug>.pages.dev
+python3 <skill-dir>/scripts/formbackend_form.py --name "<Business> — estimate requests" --email "<client email>"
+```
+The first script puts the hostname on the current Turnstile widget via the Cloudflare API (auto-creates `client-sites-NN` and rewrites the .env keys when full — always run it BEFORE the second). The second prints the form `endpoint` → use it as the §2c form action (drop the Web3Forms hidden fields). Embed Turnstile in the form: `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>` in `<head>` + `<div class="cf-turnstile" data-sitekey="<TURNSTILE_SITEKEY>"></div>` before the submit button (token auto-rides in FormData). Do any `dashboard_todo` items the script reports (FormBackend form Settings).
