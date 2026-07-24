@@ -73,30 +73,25 @@ def sync_env(e, w):
     return False
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--hostname", required=True)
-    args = ap.parse_args()
-
+def ensure_hostname(hostname):
+    """Idempotent: make sure `hostname` is covered by some Turnstile widget and
+    return {action, widget, sitekey, ...}. Raises RuntimeError on API failure."""
     e = env()
     token, account = e.get("CLOUDFLARE_API_TOKEN"), e.get("CLOUDFLARE_ACCOUNT_ID")
     if not token or not account:
-        print("CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID missing in skill .env", file=sys.stderr)
-        sys.exit(3)
+        raise RuntimeError("CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID missing in skill .env")
     base = f"https://api.cloudflare.com/client/v4/accounts/{account}/challenges/widgets"
 
     status, res = call("GET", f"{base}?per_page=50", token)
     if status != 200:
-        print(f"list failed (HTTP {status}): {res.get('errors')}", file=sys.stderr)
-        sys.exit(4)
+        raise RuntimeError(f"list failed (HTTP {status}): {res.get('errors')}")
     widgets = [full_widget(base, token, w) for w in res.get("result", [])]
 
     # 1) hostname already covered somewhere?
     for w in widgets:
-        if args.hostname in w.get("domains", []):
-            print(json.dumps({"action": "already-present", "widget": w.get("name"),
-                              "sitekey": w["sitekey"], "env_updated": sync_env(e, w)}))
-            return
+        if hostname in w.get("domains", []):
+            return {"action": "already-present", "widget": w.get("name"),
+                    "sitekey": w["sitekey"], "env_updated": sync_env(e, w)}
 
     # 2) append to a widget with spare room we hold (or can learn) the secret for
     ordered = sorted(widgets, key=lambda w: w["sitekey"] != e.get("TURNSTILE_SITEKEY"))
@@ -105,28 +100,36 @@ def main():
         usable = w["sitekey"] == e.get("TURNSTILE_SITEKEY") or w.get("secret")
         if len(domains) >= MAX_HOSTNAMES or not usable:
             continue
-        status, put_res = call("PUT", f"{base}/{w['sitekey']}", token, {
+        status, _ = call("PUT", f"{base}/{w['sitekey']}", token, {
             "name": w.get("name", "client-sites"), "mode": w.get("mode", "managed"),
-            "domains": domains + [args.hostname]})
+            "domains": domains + [hostname]})
         if status == 200:
-            print(json.dumps({"action": "appended", "widget": w.get("name"),
-                              "sitekey": w["sitekey"], "hostnames_used": len(domains) + 1,
-                              "env_updated": sync_env(e, w)}))
-            return
+            return {"action": "appended", "widget": w.get("name"),
+                    "sitekey": w["sitekey"], "hostnames_used": len(domains) + 1,
+                    "env_updated": sync_env(e, w)}
         # refused (hard cap below MAX_HOSTNAMES, etc.) → try the next candidate
 
     # 3) mint a fresh widget
     n = sum(1 for w in widgets if str(w.get("name", "")).startswith("client-sites-")) + 1
     status, res = call("POST", base, token, {
-        "name": f"client-sites-{n:02d}", "mode": "managed", "domains": [args.hostname]})
+        "name": f"client-sites-{n:02d}", "mode": "managed", "domains": [hostname]})
     if status != 200 or "result" not in res:
-        print(f"create failed (HTTP {status}): {res.get('errors')}", file=sys.stderr)
-        sys.exit(4)
+        raise RuntimeError(f"create failed (HTTP {status}): {res.get('errors')}")
     w = res["result"]
     save_env_keys(w["sitekey"], w["secret"])
-    print(json.dumps({"action": "created", "widget": w["name"], "sitekey": w["sitekey"],
-                      "env_updated": True,
-                      "note": "new keypair — use these keys in FormBackend for this and future forms"}))
+    return {"action": "created", "widget": w["name"], "sitekey": w["sitekey"],
+            "env_updated": True}
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--hostname", required=True)
+    args = ap.parse_args()
+    try:
+        print(json.dumps(ensure_hostname(args.hostname)))
+    except RuntimeError as exc:
+        print(str(exc), file=sys.stderr)
+        sys.exit(3 if "missing in skill .env" in str(exc) else 4)
 
 
 if __name__ == "__main__":

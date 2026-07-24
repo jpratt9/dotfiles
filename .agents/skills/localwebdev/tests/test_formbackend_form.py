@@ -39,12 +39,17 @@ class FormbackendFormTests(unittest.TestCase):
         os.chdir(self._prev_cwd)
         self._tmp.cleanup()
 
-    def run_main(self, argv_extra, env_vals):
+    def run_main(self, env_vals, sitekey="0xSITE"):
+        """No argv: the script takes no arguments. Turnstile is stubbed."""
         out = io.StringIO()
         with mock.patch.object(fb, "env", return_value=env_vals), \
-                mock.patch.object(sys, "argv", ["formbackend_form.py"] + argv_extra), \
+                mock.patch.object(fb.turnstile, "ensure_hostname",
+                                  return_value={"action": "already-present",
+                                                "sitekey": sitekey}) as ts, \
+                mock.patch.object(sys, "argv", ["formbackend_form.py"]), \
                 mock.patch.object(sys, "stdout", out):
             fb.main()
+        self.ts = ts
         return json.loads(out.getvalue())
 
     def test_missing_token_exits_3(self):
@@ -62,59 +67,101 @@ class FormbackendFormTests(unittest.TestCase):
                 fb.main()
         self.assertEqual(cm.exception.code, 4)
 
-    def test_email_and_turnstile_stick_no_todos(self):
+    def test_reuses_existing_form_never_duplicates(self):
+        """The whole point of idempotency: a rerun must NOT create a second form."""
+        posted = []
+
         def fake_call(method, url, token, payload=None):
             if method == "POST":
-                self.assertEqual(payload["form"]["name"], "genzhaulers")
-                self.assertEqual(payload["form"]["notify_owner_emails"], "c@x.com")
-                self.assertEqual(payload["form"]["cloudflare_turnstile_sitekey"], "sk-1")
-                return 201, {"identifier": "abc123"}
-            if method == "PATCH":
-                return 200, {}
+                posted.append(payload)
+                return 201, {"identifier": "should-not-happen"}
+            if method == "GET" and url.endswith("/forms"):
+                return 200, {"forms": [{"name": "genzhaulers", "identifier": "old123"}]}
             if method == "GET":
-                return 200, {"identifier": "abc123", "notify_owner_emails": "c@x.com"}
+                return 200, {"identifier": "old123", "notify_owner_emails": "a@b.com",
+                             "notify_owner_on_submission": True,
+                             "cloudflare_turnstile_sitekey": "0xSITE"}
             raise AssertionError(method)
 
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main(["--email", "c@x.com"], FULL_ENV)
-        self.assertEqual(out["identifier"], "abc123")
-        self.assertEqual(out["endpoint"], "https://www.formbackend.com/f/abc123")
-        self.assertEqual(out["dashboard_todo"], [])
-        self.assertEqual(out["patch_http"], 200)
+            out = self.run_main(FULL_ENV)
+        self.assertEqual(posted, [], "reran and created a duplicate form")
+        self.assertTrue(out["reused_existing_form"])
+        self.assertEqual(out["identifier"], "old123")
+        self.assertEqual(out["endpoint"], "https://www.formbackend.com/f/old123")
+        self.assertEqual(out["blocking_dashboard_actions"], [])
 
-    def test_api_refuses_extras_reports_todos(self):
+    def test_creates_when_absent_and_uses_folder_name(self):
+        posted = []
+
         def fake_call(method, url, token, payload=None):
             if method == "POST":
-                return 201, {"identifier": "abc123"}
-            if method == "PATCH":
-                return 404, {}
+                posted.append(payload)
+                return 201, {"identifier": "new123"}
+            if method == "GET" and url.endswith("/forms"):
+                return 200, {"forms": [{"name": "someone-else", "identifier": "x"}]}
             if method == "GET":
-                return 200, {"identifier": "abc123", "notify_owner_emails": None}
+                return 200, {"identifier": "new123", "notify_owner_emails": "a@b.com",
+                             "notify_owner_on_submission": True,
+                             "cloudflare_turnstile_sitekey": "0xSITE"}
             raise AssertionError(method)
 
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main(["--email", "c@x.com"], FULL_ENV)
-        self.assertIn("set notification email", out["dashboard_todo"])
-        self.assertIn("paste Turnstile sitekey+secret in form Settings", out["dashboard_todo"])
+            out = self.run_main(FULL_ENV)
+        self.assertEqual(posted[0]["form"]["name"], "genzhaulers")
+        self.assertFalse(out["reused_existing_form"])
+        # hostname derived from the folder, no argument
+        self.ts.assert_called_once_with("genzhaulers.pages.dev")
 
-    def test_no_email_no_turnstile_skips_patch(self):
-        calls = []
+    def test_create_retries_bare_when_extras_refused(self):
+        """The undocumented turnstile extras are the prime 403 suspect — on a
+        refusal it must retry without them rather than give up."""
+        posted = []
 
         def fake_call(method, url, token, payload=None):
-            calls.append(method)
             if method == "POST":
-                self.assertEqual(payload, {"form": {"name": "genzhaulers"}})
-                return 201, {"identifier": "abc123"}
+                posted.append(payload)
+                if "cloudflare_turnstile_sitekey" in payload["form"]:
+                    return 403, {}
+                return 201, {"identifier": "new123"}
+            if method == "GET" and url.endswith("/forms"):
+                return 200, {"forms": []}
             if method == "GET":
-                return 200, {"identifier": "abc123"}
+                return 200, {"identifier": "new123", "notify_owner_emails": "a@b.com",
+                             "notify_owner_on_submission": True}
             raise AssertionError(method)
 
-        env_vals = {"FORMBACKEND_TOKEN": "tok123"}
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main([], env_vals)
-        self.assertNotIn("PATCH", calls)
-        self.assertIsNone(out["patch_http"])
-        self.assertEqual(out["dashboard_todo"], [])
+            out = self.run_main(FULL_ENV)
+        self.assertEqual(len(posted), 2)
+        self.assertEqual(posted[1], {"form": {"name": "genzhaulers"}})
+        self.assertEqual(out["identifier"], "new123")
+
+    def test_find_form_handles_bare_list_response(self):
+        """The API returns {"forms": [...]}, but tolerate a bare list too."""
+        with mock.patch.object(fb, "call", lambda m, u, t, p=None:
+                               (200, [{"name": "genzhaulers", "identifier": "list123"}])):
+            self.assertEqual(fb.find_form("genzhaulers", "tok")["identifier"], "list123")
+            self.assertIsNone(fb.find_form("nope", "tok"))
+
+    def test_find_form_returns_none_on_api_error(self):
+        with mock.patch.object(fb, "call", lambda m, u, t, p=None: (500, {})):
+            self.assertIsNone(fb.find_form("genzhaulers", "tok"))
+
+    def test_notifications_off_is_blocking(self):
+        def fake_call(method, url, token, payload=None):
+            if method == "GET" and url.endswith("/forms"):
+                return 200, {"forms": [{"name": "genzhaulers", "identifier": "old123"}]}
+            if method == "GET":
+                return 200, {"identifier": "old123", "notify_owner_emails": None,
+                             "notify_owner_on_submission": False}
+            raise AssertionError(method)
+
+        with mock.patch.object(fb, "call", fake_call):
+            out = self.run_main({"FORMBACKEND_TOKEN": "tok123"})
+        acts = " ".join(out["blocking_dashboard_actions"])
+        self.assertIn("notify owner on submission", acts)
+        self.assertIn("notification email", acts)
 
 
 if __name__ == "__main__":
