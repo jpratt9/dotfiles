@@ -186,4 +186,17 @@ Stdlib-only; POSTs the live URL to John's Telegram. Exit 2 = creds not injected 
 ```
 cd ~/dev/<slug> && python3 <skill-dir>/scripts/formbackend_form.py
 ```
-No arguments, idempotent, safe to rerun: it names the form after the folder and reuses it if it already exists. Use the `endpoint` it prints as the §2c form action, drop the Web3Forms hidden `access_key`/`subject`/`from_name` fields but KEEP the `botcheck` honeypot, and do whatever it lists in `blocking_dashboard_actions` (FormBackend has no update API, so those are dashboard-only). No Turnstile: FormBackend ignores the turnstile fields on create and can't be updated via API, so its keys can only be pasted into its dashboard by hand.
+No arguments, idempotent, safe to rerun: it names the form after the folder and reuses it if it already exists. Use the `endpoint` it prints as the §2c form action, drop the Web3Forms hidden `access_key`/`subject`/`from_name` fields but KEEP the `botcheck` honeypot, and do whatever it lists in `blocking_dashboard_actions` (FormBackend has no update API, so those are dashboard-only). FormBackend also ignores the turnstile fields on create and can't be updated via API — but that only blocks the *dashboard half*; wire up the site half per §2e.
+
+## 2e. Cloudflare Turnstile (automatic — every build)
+Two halves. **Both** are needed or the form breaks: a site with no widget plus "Require Turnstile response" ON marks every genuine lead as spam.
+
+**Site half — automated, nothing to do by hand.** Register the hostname on a Turnstile widget (idempotent; appends to an existing `client-sites-*` widget with room, else mints one, and syncs `TURNSTILE_SITEKEY`/`TURNSTILE_SECRET` into `<skill-dir>/.env`):
+```
+python3 <skill-dir>/scripts/turnstile_widget.py --hostname <slug>.pages.dev
+```
+The markup is then injected by `scripts/ensure_turnstile.py`, which **`deploy.sh` already runs on every deploy** (wired in by `write_deploy_sh.py`) — so a normal `./deploy.sh` is enough and there is no separate step. It guarantees, only where missing: `api.js` in the `<head>` of any page carrying a `<form>` (and `contact.html` regardless), a `.cf-turnstile` div inside every `<form>`, and the `.turnstile-box` rule in the stylesheet. Idempotent, so it's a no-op after the first run. It parses with BeautifulSoup + tinycss2 and splices only at the offsets they report — it never reserializes the document (a full bs4 round-trip rewrites attribute order and void elements: 425–947 changed lines on an untouched page). Run it directly with `--check` to audit without writing, or `--theme light|auto` for light-themed sites (default `dark`). Exit 2 = no sitekey configured (deploy continues); any other non-zero aborts the deploy.
+
+Also add `turnstile.reset()` to the form's submit-error path in `script.js` — Turnstile tokens are single-use, so without it a retry after a failed submit always fails.
+
+**Dashboard half — manual, FormBackend has no API for it.** Report these to John in the handoff alongside the other `blocking_dashboard_actions`: paste `TURNSTILE_SITEKEY` and `TURNSTILE_SECRET` from `<skill-dir>/.env` into the form's Cloudflare Turnstile fields and switch **Require Turnstile response** ON. If a custom domain is added later, that hostname must be added to the widget too or Turnstile fails there.

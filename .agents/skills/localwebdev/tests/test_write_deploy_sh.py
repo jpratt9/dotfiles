@@ -2,6 +2,7 @@
 import importlib.util
 import os
 import stat
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -58,7 +59,50 @@ class WriteDeployShTests(unittest.TestCase):
             # bash uses ${PROJECT}; ensure no leftover python format braces
             self.assertNotIn("{project}", body)
             self.assertNotIn("{name}", body)
+            self.assertNotIn("{turnstile}", body)
             self.assertIn("${PROJECT}", body)
+
+
+class TurnstileStepTests(unittest.TestCase):
+    """deploy.sh must run the Turnstile injector before uploading."""
+
+    def _body(self, d):
+        run_main(["prog", "--project", "x", "--name", "X", "--dir", d])
+        with open(os.path.join(d, "deploy.sh")) as f:
+            return f.read()
+
+    def test_injector_is_invoked_with_an_absolute_path(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            expected = os.path.join(
+                os.path.dirname(os.path.abspath(wds.__file__)), "ensure_turnstile.py")
+            self.assertIn(f'TURNSTILE="{expected}"', body)
+            self.assertTrue(os.path.isabs(expected))
+            self.assertIn('python3 "$TURNSTILE" --dir public', body)
+
+    def test_runs_before_the_upload(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertLess(body.index('python3 "$TURNSTILE"'),
+                            body.index("wrangler pages deploy public"),
+                            "markup must be injected before the files are uploaded")
+
+    def test_step_is_skipped_when_skill_absent(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertIn('if [ -f "$TURNSTILE" ]; then', self._body(d))
+
+    def test_exit_2_tolerated_other_failures_abort(self):
+        with tempfile.TemporaryDirectory() as d:
+            body = self._body(d)
+            self.assertIn("[ $ts_rc -ne 0 ] && [ $ts_rc -ne 2 ]", body)
+            self.assertIn("exit $ts_rc", body)
+
+    def test_generated_script_is_valid_bash(self):
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "deploy.sh")
+            run_main(["prog", "--project", "x", "--name", "X", "--dir", d])
+            proc = subprocess.run(["bash", "-n", path], capture_output=True, text=True)
+            self.assertEqual(proc.returncode, 0, f"bash syntax error: {proc.stderr}")
 
 
 if __name__ == "__main__":
