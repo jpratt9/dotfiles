@@ -14,8 +14,9 @@ import argparse
 import json
 import re
 import sys
-import urllib.request
 from pathlib import Path
+
+import requests
 
 ENV_PATH = Path(__file__).resolve().parent.parent / ".env"
 MAX_HOSTNAMES = 15
@@ -39,19 +40,19 @@ def save_env_keys(sitekey, secret):
 
 
 def call(method, url, token, payload=None):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    """Return (status, body). Cloudflare returns its reasons in `errors` on
+    failures too, so the body is parsed and kept whatever the status."""
     try:
-        with urllib.request.urlopen(req) as r:
-            return r.status, json.loads(r.read().decode() or "{}")
-    except urllib.error.HTTPError as e:
-        try:
-            return e.code, json.loads(e.read().decode())
-        except Exception:
-            return e.code, {}
-    except Exception as e:
+        r = requests.request(method, url, json=payload, timeout=30, headers={
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    except requests.RequestException as e:
         return 0, {"errors": [str(e)]}
+    if not r.text.strip():
+        return r.status_code, {}
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, {"errors": [r.text.strip()[:500]]}
 
 
 def full_widget(base, token, w):

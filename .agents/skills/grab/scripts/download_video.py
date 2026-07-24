@@ -202,9 +202,17 @@ def download_video(url: str) -> dict:
     # because the template's literal extension stays and the merge tacks on .mp4.
     output_path = os.path.join(download_dir, f"{stem}.mp4")
 
+    # Facebook serves reels/videos with AV1-only DASH renditions, which macOS
+    # players (QuickTime/Preview) can't decode -- the file plays back black with
+    # only the burned-in captions showing. So on Facebook prefer H.264: an H.264
+    # DASH pair if offered, else the progressive hd/sd (H.264) formats, else
+    # whatever's there. Every other site decodes fine on the default best pick.
+    fmt = ("bv*[vcodec~='avc1|h264']+ba/hd/sd/b" if platform == "Facebook"
+           else "bestvideo+bestaudio/best")
+
     # Download best quality
     result = run_ytdlp(
-        ["yt-dlp", "-f", "bestvideo+bestaudio/best", "--merge-output-format", "mp4",
+        ["yt-dlp", "-f", fmt, "--merge-output-format", "mp4",
          "-o", output_path, url], timeout=600
     )
 

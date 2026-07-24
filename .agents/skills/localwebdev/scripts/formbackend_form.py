@@ -9,8 +9,9 @@ Exit: 0 ok (prints JSON w/ identifier), 3 no token, 4 API error.
 import argparse
 import json
 import sys
-import urllib.request
 from pathlib import Path
+
+import requests
 
 API = "https://www.formbackend.com/api/v1/forms"
 
@@ -27,16 +28,19 @@ def env():
 
 
 def call(method, url, token, payload=None):
-    data = json.dumps(payload).encode() if payload is not None else None
-    req = urllib.request.Request(url, data=data, method=method, headers={
-        "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    """Return (status, body). The body is kept on 4xx/5xx too — FormBackend puts
+    the reason for a refusal in there, so discarding it hides why a call failed."""
     try:
-        with urllib.request.urlopen(req) as r:
-            return r.status, json.loads(r.read().decode() or "{}")
-    except urllib.error.HTTPError as e:
-        return e.code, {}
-    except Exception as e:
+        r = requests.request(method, url, json=payload, timeout=30, headers={
+            "Authorization": f"Bearer {token}", "Content-Type": "application/json"})
+    except requests.RequestException as e:
         return 0, {"error": str(e)}
+    if not r.text.strip():
+        return r.status_code, {}
+    try:
+        return r.status_code, r.json()
+    except ValueError:
+        return r.status_code, {"error": r.text.strip()[:500]}
 
 
 def main():
