@@ -148,6 +148,30 @@ def download_tiktok_photo(url: str) -> dict:
     return {"title": title, "platform": "TikTok", "sound": sound, "photos": photos}
 
 
+def _to_aac_lc(path: str) -> str | None:
+    """Re-encode a downloaded file's audio to AAC-LC (video stream-copied) so it
+    plays on iOS and survives Telegram. Facebook serves HE-AAC, which iPhone /
+    the Telegram iOS player mangle (fine on desktop, black/dead on the phone).
+    Swaps the file in place; returns the path, or None (keeping the original) if
+    ffmpeg is missing or the pass fails."""
+    tmp = path + ".aac.mp4"
+    try:
+        result = subprocess.run(
+            ["ffmpeg", "-y", "-v", "error", "-i", path,
+             "-c:v", "copy", "-c:a", "aac", "-b:a", "128k",
+             "-movflags", "+faststart", tmp],
+            capture_output=True, text=True,
+        )
+    except FileNotFoundError:
+        return None
+    if result.returncode != 0 or not os.path.exists(tmp):
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        return None
+    os.replace(tmp, path)
+    return path
+
+
 def download_video(url: str) -> dict:
     # TikTok photo posts need a different path entirely -- yt-dlp can't touch them.
     # Shortened links (vm./vt.) carry no /photo/ marker, so expand them first.
@@ -227,6 +251,12 @@ def download_video(url: str) -> dict:
             output_path = os.path.join(download_dir, candidates[0])
         else:
             return {"error": "Download appeared to succeed but output file not found."}
+
+    # Facebook audio arrives as HE-AAC on both the DASH and progressive formats,
+    # which iOS / the Telegram app mangle -- convert it to AAC-LC in place so the
+    # clip survives the trip to the phone. Video is copied, so it's quick.
+    if platform == "Facebook":
+        _to_aac_lc(output_path)
 
     return {
         "title": title,

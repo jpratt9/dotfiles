@@ -2,7 +2,11 @@
 """Create a FormBackend form for a client site and (best-effort) set its
 notification email + Cloudflare Turnstile keys via API.
 
-Usage: python3 formbackend_form.py --name "Biz — estimate requests" [--email client@ex.com]
+The form name is taken from the CURRENT WORKING DIRECTORY's folder name — run it
+from inside ~/dev/<slug> and the form is named `<slug>` (e.g. `genzhaulers`).
+There is no name argument on purpose: the folder IS the name.
+
+Usage: cd ~/dev/<slug> && python3 formbackend_form.py [--email client@ex.com]
 Reads FORMBACKEND_TOKEN, TURNSTILE_SITEKEY, TURNSTILE_SECRET from ../.env.
 Exit: 0 ok (prints JSON w/ identifier), 3 no token, 4 API error.
 """
@@ -45,7 +49,6 @@ def call(method, url, token, payload=None):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--name", required=True)
     ap.add_argument("--email", default="")
     args = ap.parse_args()
 
@@ -55,8 +58,9 @@ def main():
         print("FORMBACKEND_TOKEN missing in skill .env", file=sys.stderr)
         sys.exit(3)
 
+    # form name = the folder we're running in, no argument, no exceptions
+    form = {"name": Path.cwd().name}
     # extra fields are undocumented on create — harmless if ignored
-    form = {"name": args.name}
     extra = {}
     if args.email:
         extra["notify_owner_emails"] = args.email

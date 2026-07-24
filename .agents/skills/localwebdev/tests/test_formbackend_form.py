@@ -7,6 +7,7 @@ import io
 import json
 import os
 import sys
+import tempfile
 import unittest
 from unittest import mock
 
@@ -25,6 +26,19 @@ FULL_ENV = {
 
 
 class FormbackendFormTests(unittest.TestCase):
+    def setUp(self):
+        """The form name comes from the cwd's folder name, so run each test from
+        inside a throwaway dir called `genzhaulers`."""
+        self._prev_cwd = os.getcwd()
+        self._tmp = tempfile.TemporaryDirectory()
+        proj = os.path.join(self._tmp.name, "genzhaulers")
+        os.mkdir(proj)
+        os.chdir(proj)
+
+    def tearDown(self):
+        os.chdir(self._prev_cwd)
+        self._tmp.cleanup()
+
     def run_main(self, argv_extra, env_vals):
         out = io.StringIO()
         with mock.patch.object(fb, "env", return_value=env_vals), \
@@ -35,7 +49,7 @@ class FormbackendFormTests(unittest.TestCase):
 
     def test_missing_token_exits_3(self):
         with mock.patch.object(fb, "env", return_value={}), \
-                mock.patch.object(sys, "argv", ["formbackend_form.py", "--name", "x"]):
+                mock.patch.object(sys, "argv", ["formbackend_form.py"]):
             with self.assertRaises(SystemExit) as cm:
                 fb.main()
         self.assertEqual(cm.exception.code, 3)
@@ -43,7 +57,7 @@ class FormbackendFormTests(unittest.TestCase):
     def test_create_failure_exits_4(self):
         with mock.patch.object(fb, "call", lambda m, u, t, p=None: (422, {})), \
                 mock.patch.object(fb, "env", return_value=FULL_ENV), \
-                mock.patch.object(sys, "argv", ["formbackend_form.py", "--name", "x"]):
+                mock.patch.object(sys, "argv", ["formbackend_form.py"]):
             with self.assertRaises(SystemExit) as cm:
                 fb.main()
         self.assertEqual(cm.exception.code, 4)
@@ -51,7 +65,7 @@ class FormbackendFormTests(unittest.TestCase):
     def test_email_and_turnstile_stick_no_todos(self):
         def fake_call(method, url, token, payload=None):
             if method == "POST":
-                self.assertEqual(payload["form"]["name"], "Biz — estimates")
+                self.assertEqual(payload["form"]["name"], "genzhaulers")
                 self.assertEqual(payload["form"]["notify_owner_emails"], "c@x.com")
                 self.assertEqual(payload["form"]["cloudflare_turnstile_sitekey"], "sk-1")
                 return 201, {"identifier": "abc123"}
@@ -62,7 +76,7 @@ class FormbackendFormTests(unittest.TestCase):
             raise AssertionError(method)
 
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main(["--name", "Biz — estimates", "--email", "c@x.com"], FULL_ENV)
+            out = self.run_main(["--email", "c@x.com"], FULL_ENV)
         self.assertEqual(out["identifier"], "abc123")
         self.assertEqual(out["endpoint"], "https://www.formbackend.com/f/abc123")
         self.assertEqual(out["dashboard_todo"], [])
@@ -79,7 +93,7 @@ class FormbackendFormTests(unittest.TestCase):
             raise AssertionError(method)
 
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main(["--name", "Biz", "--email", "c@x.com"], FULL_ENV)
+            out = self.run_main(["--email", "c@x.com"], FULL_ENV)
         self.assertIn("set notification email", out["dashboard_todo"])
         self.assertIn("paste Turnstile sitekey+secret in form Settings", out["dashboard_todo"])
 
@@ -89,7 +103,7 @@ class FormbackendFormTests(unittest.TestCase):
         def fake_call(method, url, token, payload=None):
             calls.append(method)
             if method == "POST":
-                self.assertEqual(payload, {"form": {"name": "Biz"}})
+                self.assertEqual(payload, {"form": {"name": "genzhaulers"}})
                 return 201, {"identifier": "abc123"}
             if method == "GET":
                 return 200, {"identifier": "abc123"}
@@ -97,7 +111,7 @@ class FormbackendFormTests(unittest.TestCase):
 
         env_vals = {"FORMBACKEND_TOKEN": "tok123"}
         with mock.patch.object(fb, "call", fake_call):
-            out = self.run_main(["--name", "Biz"], env_vals)
+            out = self.run_main([], env_vals)
         self.assertNotIn("PATCH", calls)
         self.assertIsNone(out["patch_http"])
         self.assertEqual(out["dashboard_todo"], [])
