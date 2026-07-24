@@ -7,25 +7,22 @@ Everything is derived from the folder you're standing in:
     hostname = <slug>.pages.dev
     form name = the slug, verbatim
 
-It (1) makes sure the hostname is on a Turnstile widget and (2) reuses the
-FormBackend form named after the slug, creating it only if absent — so a rerun
-never mints a duplicate. Prints the endpoint + sitekey to wire into the form.
+It reuses the FormBackend form named after the slug, creating it only if absent
+— so a rerun never mints a duplicate. Prints the endpoint to wire into the form.
+
+No Turnstile here on purpose: FormBackend has no update API and ignores the
+turnstile fields on create, so keys can ONLY be pasted in its dashboard by hand.
+Use turnstile_widget.py separately if you ever do that.
 
 Usage: cd ~/dev/<slug> && python3 formbackend_form.py
-Reads FORMBACKEND_TOKEN, TURNSTILE_* , CLOUDFLARE_* from ../.env.
+Reads FORMBACKEND_TOKEN from ../.env.
 Exit: 0 ok (prints JSON), 3 no token, 4 API error.
 """
-import importlib.util
 import json
 import sys
 from pathlib import Path
 
 import requests
-
-_ts_spec = importlib.util.spec_from_file_location(
-    "turnstile_widget", Path(__file__).resolve().parent / "turnstile_widget.py")
-turnstile = importlib.util.module_from_spec(_ts_spec)
-_ts_spec.loader.exec_module(turnstile)
 
 API = "https://www.formbackend.com/api/v1/forms"
 
@@ -79,26 +76,12 @@ def main():
         print("FORMBACKEND_TOKEN missing in skill .env", file=sys.stderr)
         sys.exit(3)
 
-    # 1) hostname onto a Turnstile widget (idempotent)
-    try:
-        ts = turnstile.ensure_hostname(f"{slug}.pages.dev")
-    except RuntimeError as exc:
-        ts = {"action": "failed", "error": str(exc), "sitekey": None}
-
-    # 2) reuse the form named after this folder, create only if absent
+    # reuse the form named after this folder, create only if absent
     existing = find_form(slug, token)
     if existing:
         ident, reused = existing["identifier"], True
     else:
-        # extra fields are undocumented on create — harmless if ignored
-        extra = {}
-        if e.get("TURNSTILE_SITEKEY"):
-            extra["cloudflare_turnstile_sitekey"] = e["TURNSTILE_SITEKEY"]
-            extra["cloudflare_turnstile_secret"] = e["TURNSTILE_SECRET"]
-        status, created = call("POST", API, token, {"form": {"name": slug, **extra}})
-        if status not in (200, 201) or not created.get("identifier"):
-            # the undocumented extras are the prime suspect for a refusal — retry bare
-            status, created = call("POST", API, token, {"form": {"name": slug}})
+        status, created = call("POST", API, token, {"form": {"name": slug}})
         if status not in (200, 201) or not created.get("identifier"):
             print(f"create failed (HTTP {status}): {created}", file=sys.stderr)
             sys.exit(4)
@@ -109,8 +92,6 @@ def main():
         "slug": slug,
         "identifier": ident,
         "endpoint": f"https://www.formbackend.com/f/{ident}",
-        "sitekey": ts.get("sitekey"),
-        "turnstile": ts.get("action"),
         "reused_existing_form": reused,
         "notify_owner_emails": final.get("notify_owner_emails"),
         "notify_owner_on_submission": final.get("notify_owner_on_submission"),
@@ -126,10 +107,6 @@ def main():
             "are stored and NOBODY is emailed")
     if not final.get("notify_owner_emails"):
         out["blocking_dashboard_actions"].append("set the notification email address")
-    if out["sitekey"] and not final.get("cloudflare_turnstile_sitekey"):
-        out["blocking_dashboard_actions"].append(
-            f"paste Turnstile sitekey {out['sitekey']} + its secret into form Settings, "
-            "or leave the cf-turnstile div off the page entirely")
 
     print(json.dumps(out, indent=2))
 

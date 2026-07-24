@@ -39,17 +39,13 @@ class FormbackendFormTests(unittest.TestCase):
         os.chdir(self._prev_cwd)
         self._tmp.cleanup()
 
-    def run_main(self, env_vals, sitekey="0xSITE"):
-        """No argv: the script takes no arguments. Turnstile is stubbed."""
+    def run_main(self, env_vals):
+        """The script takes no arguments and touches no Cloudflare API."""
         out = io.StringIO()
         with mock.patch.object(fb, "env", return_value=env_vals), \
-                mock.patch.object(fb.turnstile, "ensure_hostname",
-                                  return_value={"action": "already-present",
-                                                "sitekey": sitekey}) as ts, \
                 mock.patch.object(sys, "argv", ["formbackend_form.py"]), \
                 mock.patch.object(sys, "stdout", out):
             fb.main()
-        self.ts = ts
         return json.loads(out.getvalue())
 
     def test_missing_token_exits_3(self):
@@ -110,19 +106,15 @@ class FormbackendFormTests(unittest.TestCase):
             out = self.run_main(FULL_ENV)
         self.assertEqual(posted[0]["form"]["name"], "genzhaulers")
         self.assertFalse(out["reused_existing_form"])
-        # hostname derived from the folder, no argument
-        self.ts.assert_called_once_with("genzhaulers.pages.dev")
 
-    def test_create_retries_bare_when_extras_refused(self):
-        """The undocumented turnstile extras are the prime 403 suspect — on a
-        refusal it must retry without them rather than give up."""
+    def test_create_sends_only_the_name(self):
+        """No undocumented turnstile extras — they were ignored by FormBackend
+        and are the prime suspect for the original 403."""
         posted = []
 
         def fake_call(method, url, token, payload=None):
             if method == "POST":
                 posted.append(payload)
-                if "cloudflare_turnstile_sitekey" in payload["form"]:
-                    return 403, {}
                 return 201, {"identifier": "new123"}
             if method == "GET" and url.endswith("/forms"):
                 return 200, {"forms": []}
@@ -133,8 +125,7 @@ class FormbackendFormTests(unittest.TestCase):
 
         with mock.patch.object(fb, "call", fake_call):
             out = self.run_main(FULL_ENV)
-        self.assertEqual(len(posted), 2)
-        self.assertEqual(posted[1], {"form": {"name": "genzhaulers"}})
+        self.assertEqual(posted, [{"form": {"name": "genzhaulers"}}])
         self.assertEqual(out["identifier"], "new123")
 
     def test_find_form_handles_bare_list_response(self):

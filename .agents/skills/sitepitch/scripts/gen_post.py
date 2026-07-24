@@ -29,11 +29,11 @@ import sys
 #   {pages} - site size in pages (randomly 10/15/20 unless --pages is given)
 #   {cta}   - call-to-action, picked at random per post from CTAS
 TEMPLATES = [
-    "Looking to build a website for {slots} {trade} this month. {pages} page site, you can host it anywhere. {cta}",
-    "Building websites for {slots} {trade} this month. {pages} page site, host it wherever you want. {cta}",
-    "Looking to make a {pages} page website for {slots} {trade} this month. Host it anywhere you like. {cta}",
-    "Website for {slots} {trade} this month. {pages} page site, you can host it anywhere. {cta}",
-    "Looking to build a website for {slots} {trade} this month. Full {pages} page site, host it wherever. {cta}",
+    "Looking to build a free website for {slots} {trade} this month. {pages} page site, you can host it anywhere. {cta}",
+    "Building free websites for {slots} {trade} this month. {pages} page site, host it wherever you want. {cta}",
+    "Looking to make a free {pages} page website for {slots} {trade} this month. Host it anywhere you like. {cta}",
+    "Free website for {slots} {trade} this month. {pages} page site, you can host it anywhere. {cta}",
+    "Looking to build a free website for {slots} {trade} this month. Full {pages} page site, host it wherever. {cta}",
 ]
 
 # Call-to-action lines, picked at random per post.

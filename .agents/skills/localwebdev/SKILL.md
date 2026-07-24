@@ -182,8 +182,8 @@ Stdlib-only; POSTs the live URL to John's Telegram. Exit 2 = creds not injected 
 - Don't stand up a local http server; John opens the file directly.
 - The only `git` push is the §4 private-repo backup; don't commit/push anywhere else or delete infra.
 
-## 2d. FormBackend + Turnstile (preferred over Web3Forms when FORMBACKEND_TOKEN is set in `<skill-dir>/.env`)
+## 2d. FormBackend (preferred over Web3Forms when FORMBACKEND_TOKEN is set in `<skill-dir>/.env`)
 ```
 cd ~/dev/<slug> && python3 <skill-dir>/scripts/formbackend_form.py
 ```
-No arguments, idempotent, safe to rerun. It derives the slug from the folder, puts `<slug>.pages.dev` on a Turnstile widget, and reuses-or-creates the FormBackend form named `<slug>`. Use the `endpoint` it prints as the §2c form action (drop the Web3Forms hidden fields). Only add the Turnstile div — `<script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>` in `<head>` + `<div class="cf-turnstile" data-sitekey="<sitekey>"></div>` before the submit button — if it reports no blocking action about the secret. Do whatever it lists in `blocking_dashboard_actions` (FormBackend has no update API, so those are dashboard-only).
+No arguments, idempotent, safe to rerun: it names the form after the folder and reuses it if it already exists. Use the `endpoint` it prints as the §2c form action, drop the Web3Forms hidden `access_key`/`subject`/`from_name` fields but KEEP the `botcheck` honeypot, and do whatever it lists in `blocking_dashboard_actions` (FormBackend has no update API, so those are dashboard-only). No Turnstile: FormBackend ignores the turnstile fields on create and can't be updated via API, so its keys can only be pasted into its dashboard by hand.
